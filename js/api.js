@@ -239,7 +239,7 @@ const API = (() => {
     const proxy = KEYS.proxy();
     if (proxy) {
       try {
-        const d = await fetchJSON(`${proxy}/news?q=${q}`);
+        const d = await fetchJSON(`${proxy}/news?symbol=${encodeURIComponent(symbol)}&q=${q}`);
         if (d.articles) articles = d.articles.map(mapArticle);
       } catch {}
     }
