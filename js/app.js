@@ -9,7 +9,6 @@ const App = (() => {
   const S = {
     symbol: 'AAPL', name: 'Apple Inc.', exchange: 'NASDAQ', sector: 'Technology',
     allDates: [], allPrices: [], allOpens: [], allHighs: [], allLows: [],
-    intradayData: null,
     period: '1M', chartType: 'line', forecastDays: 7,
     lang: localStorage.getItem('cf_lang') || 'de',
     forecast: null, chart: null, refreshTimer: null, lastPrice: null,
@@ -190,7 +189,7 @@ const App = (() => {
       document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       S.period = btn.dataset.period;
-      if (S.period === '1T') { loadIntraday(); } else { hideChartMsg(); updateChart(); }
+      updateChart();
     });
 
     // Forecast period
@@ -260,7 +259,6 @@ const App = (() => {
       S.allOpens  = hist.opens  || hist.prices;
       S.allHighs  = hist.highs  || hist.prices;
       S.allLows   = hist.lows   || hist.prices;
-      S.intradayData = null;
 
       const quote = await API.fetchQuote(symbol);
       const price = quote?.price ?? S.allPrices[S.allPrices.length - 1];
@@ -287,35 +285,6 @@ const App = (() => {
       updateDemoBanner();
     } catch (e) { console.error('loadStock:', e); }
     hideLoading();
-  }
-
-  // ── Intraday ──────────────────────────────────────────────────
-
-  async function loadIntraday() {
-    showLoading(t('loading'));
-    const now  = Math.floor(Date.now() / 1000);
-    const from = now - 2 * 86400;
-    let data = await API.fetchCandle(S.symbol, '5', from, now);
-    if (!data) data = await API.fetchIntradayAV(S.symbol);
-    hideLoading();
-    if (data && data.prices.length) {
-      S.intradayData = data;
-      hideChartMsg();
-      rebuildChart();
-      updateChart();
-    } else {
-      S.intradayData = null;
-      showChartMsg('⚠️ ' + t('intraday_na'));
-    }
-  }
-
-  function showChartMsg(text) {
-    const el = document.getElementById('chartMsg');
-    if (el) { el.textContent = text; el.hidden = false; }
-  }
-  function hideChartMsg() {
-    const el = document.getElementById('chartMsg');
-    if (el) el.hidden = true;
   }
 
   // ── Chart ────────────────────────────────────────────────────
@@ -400,34 +369,6 @@ const App = (() => {
   function updateChart() {
     if (!S.chart) return;
     const isCandle = S.chartType === 'candlestick';
-    const isIntraday = S.period === '1T' && S.intradayData;
-
-    if (isIntraday) {
-      const d = S.intradayData;
-      // Filter to the most recent trading day only
-      const latestDate = d.dates[d.dates.length - 1];
-      const idx = d.dates.reduce((acc, dt, i) => (dt === latestDate ? [...acc, i] : acc), []);
-
-      if (isCandle) {
-        S.chart.data.datasets[0].data = idx.map(i => ({
-          x: d.timestamps[i], o: d.opens[i], h: d.highs[i], l: d.lows[i], c: d.prices[i]
-        }));
-      } else {
-        const prices = idx.map(i => d.prices[i]);
-        const times  = idx.map(i =>
-          d.timeLabels ? d.timeLabels[i]
-            : new Date(d.timestamps[i]).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
-        );
-        S.chart.data.labels             = times;
-        S.chart.data.datasets[0].data   = prices;
-        S.chart.data.datasets[1].data   = Forecast.sma(prices, Math.min(20, prices.length));
-        S.chart.data.datasets[2].data   = new Array(prices.length).fill(null);
-        S.chart.data.datasets[3].data   = new Array(prices.length).fill(null);
-      }
-      S.chart.update('active');
-      return;
-    }
-
     // Daily data sliced by period
     const PERIOD_DAYS = { '1W': 5, '1M': 22, '3M': 66, '6M': 130, '1J': 999 };
     const limit  = PERIOD_DAYS[S.period] || 22;
