@@ -295,7 +295,8 @@ const App = (() => {
     showLoading(t('loading'));
     const now  = Math.floor(Date.now() / 1000);
     const from = now - 2 * 86400;
-    const data = await API.fetchCandle(S.symbol, '5', from, now);
+    let data = await API.fetchCandle(S.symbol, '5', from, now);
+    if (!data) data = await API.fetchIntradayAV(S.symbol);
     hideLoading();
     if (data && data.prices.length) {
       S.intradayData = data;
@@ -304,7 +305,7 @@ const App = (() => {
       updateChart();
     } else {
       S.intradayData = null;
-      showChartMsg('⚠️ ' + t('intraday_na') + '\n\nBitte den Cloudflare Worker um die Route /candle ergänzen.');
+      showChartMsg('⚠️ ' + t('intraday_na'));
     }
   }
 
@@ -414,7 +415,8 @@ const App = (() => {
       } else {
         const prices = idx.map(i => d.prices[i]);
         const times  = idx.map(i =>
-          new Date(d.timestamps[i]).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+          d.timeLabels ? d.timeLabels[i]
+            : new Date(d.timestamps[i]).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
         );
         S.chart.data.labels             = times;
         S.chart.data.datasets[0].data   = prices;

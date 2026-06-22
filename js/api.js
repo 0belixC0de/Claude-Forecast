@@ -99,7 +99,7 @@ const API = (() => {
     return result;
   }
 
-  // ── Intraday candle (Finnhub) ────────────────────────────────
+  // ── Intraday candle (Finnhub → Alpha Vantage fallback) ───────
 
   async function fetchCandle(symbol, resolution = 'D', from, to) {
     const now  = Math.floor(Date.now() / 1000);
@@ -123,8 +123,42 @@ const API = (() => {
     return null;
   }
 
+  async function fetchIntradayAV(symbol) {
+    const proxy = KEYS.proxy();
+    if (proxy) {
+      try {
+        const data = await fetchJSON(`${proxy}/intraday?symbol=${encodeURIComponent(symbol)}`);
+        const r = parseAVIntraday(data);
+        if (r) return r;
+      } catch (e) { console.warn('proxy /intraday:', e.message); }
+    }
+    if (KEYS.av()) {
+      try {
+        const data = await fetchJSON(`https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=${encodeURIComponent(symbol)}&interval=5min&outputsize=compact&apikey=${KEYS.av()}`);
+        const r = parseAVIntraday(data);
+        if (r) return r;
+      } catch (e) { console.error('AV intraday:', e.message); }
+    }
+    return null;
+  }
+
+  function parseAVIntraday(data) {
+    const series = data['Time Series (5min)'];
+    if (!series) return null;
+    const entries = Object.entries(series).reverse(); // oldest first
+    return {
+      dates:      entries.map(([dt]) => dt.split(' ')[0]),
+      timeLabels: entries.map(([dt]) => dt.split(' ')[1].slice(0, 5)), // "09:30"
+      timestamps: entries.map(([dt]) => new Date(dt.replace(' ', 'T') + '-05:00').getTime()),
+      prices:     entries.map(([,v]) => parseFloat(v['4. close'])),
+      opens:      entries.map(([,v]) => parseFloat(v['1. open'])),
+      highs:      entries.map(([,v]) => parseFloat(v['2. high'])),
+      lows:       entries.map(([,v]) => parseFloat(v['3. low'])),
+      volumes:    entries.map(([,v]) => parseInt(v['5. volume']))
+    };
+  }
+
   function parseCandle(data) {
-    const len = data.t.length;
     const dates  = data.t.map(ts => new Date(ts * 1000).toISOString().split('T')[0]);
     return {
       dates,
@@ -270,5 +304,5 @@ const API = (() => {
     ];
   }
 
-  return { KEYS, MARKET_SYMS, fetchHistory, fetchCandle, fetchQuote, fetchMarket, searchSymbol, fetchNews, analyzeSentiment, demoSuggestions };
+  return { KEYS, MARKET_SYMS, fetchHistory, fetchCandle, fetchIntradayAV, fetchQuote, fetchMarket, searchSymbol, fetchNews, analyzeSentiment, demoSuggestions };
 })();
