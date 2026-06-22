@@ -521,12 +521,14 @@ const App = (() => {
     document.body.style.overflow = '';
   }
   function loadModalKeys() {
-    document.getElementById('avKey').value = API.KEYS.av();
-    document.getElementById('fhKey').value = API.KEYS.fh();
-    document.getElementById('gnKey').value = API.KEYS.gn();
+    document.getElementById('proxyUrl').value = API.KEYS.proxy();
+    document.getElementById('avKey').value    = API.KEYS.av();
+    document.getElementById('fhKey').value    = API.KEYS.fh();
+    document.getElementById('gnKey').value    = API.KEYS.gn();
   }
   function saveKeys() {
     API.KEYS.save(
+      document.getElementById('proxyUrl').value,
       document.getElementById('avKey').value,
       document.getElementById('fhKey').value,
       document.getElementById('gnKey').value

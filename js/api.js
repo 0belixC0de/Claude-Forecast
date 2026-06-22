@@ -1,25 +1,30 @@
 /* ═══════════════════════════════════════════
-   API-Integration – Alpha Vantage · Finnhub · GNews
+   API-Integration – Proxy-First-Strategie
+   Priorität: Cloudflare Worker → direkte Keys → Demo
    ═══════════════════════════════════════════ */
 
 const API = (() => {
 
-  // ── Key-Verwaltung ───────────────────────────────────────────
+  // ── Key- & Proxy-Verwaltung ──────────────────────────────────
 
   const KEYS = {
-    av:  () => localStorage.getItem('cf_av')  || '',
-    fh:  () => localStorage.getItem('cf_fh')  || '',
-    gn:  () => localStorage.getItem('cf_gn')  || '',
-    save: (av, fh, gn) => {
-      localStorage.setItem('cf_av', av.trim());
-      localStorage.setItem('cf_fh', fh.trim());
-      localStorage.setItem('cf_gn', gn.trim());
+    proxy: () => localStorage.getItem('cf_proxy') || '',
+    av:    () => localStorage.getItem('cf_av')    || '',
+    fh:    () => localStorage.getItem('cf_fh')    || '',
+    gn:    () => localStorage.getItem('cf_gn')    || '',
+    save(proxy, av, fh, gn) {
+      localStorage.setItem('cf_proxy', proxy.trim());
+      localStorage.setItem('cf_av',    av.trim());
+      localStorage.setItem('cf_fh',    fh.trim());
+      localStorage.setItem('cf_gn',    gn.trim());
     },
-    clear: () => { localStorage.removeItem('cf_av'); localStorage.removeItem('cf_fh'); localStorage.removeItem('cf_gn'); },
-    hasAny: () => !!(localStorage.getItem('cf_av') || localStorage.getItem('cf_fh'))
+    clear() {
+      ['cf_proxy', 'cf_av', 'cf_fh', 'cf_gn'].forEach(k => localStorage.removeItem(k));
+    },
+    hasAny: () => !!(localStorage.getItem('cf_proxy') || localStorage.getItem('cf_av') || localStorage.getItem('cf_fh'))
   };
 
-  // ── Simpler Cache (localStorage + TTL) ──────────────────────
+  // ── Cache (localStorage + TTL) ───────────────────────────────
 
   const cache = {
     set(key, data, ttlMin = 5) {
@@ -46,152 +51,167 @@ const API = (() => {
 
   function formatTimeAgo(isoString) {
     const diff = (Date.now() - new Date(isoString).getTime()) / 1000;
-    if (diff < 60)   return 'gerade eben';
-    if (diff < 3600) return `vor ${Math.round(diff / 60)} Min.`;
+    if (diff < 60)    return 'gerade eben';
+    if (diff < 3600)  return `vor ${Math.round(diff / 60)} Min.`;
     if (diff < 86400) return `vor ${Math.round(diff / 3600)} Std.`;
     return `vor ${Math.round(diff / 86400)} Tagen`;
   }
 
-  // ── Historische Kurse – Alpha Vantage ────────────────────────
+  function parseHistoryResponse(data) {
+    const series = data['Time Series (Daily)'];
+    if (!series) return null;
+    const entries = Object.entries(series).slice(0, 120).reverse();
+    return {
+      dates:   entries.map(([d]) => d),
+      prices:  entries.map(([, v]) => parseFloat(v['4. close'])),
+      highs:   entries.map(([, v]) => parseFloat(v['2. high'])),
+      lows:    entries.map(([, v]) => parseFloat(v['3. low'])),
+      volumes: entries.map(([, v]) => parseInt(v['5. volume']))
+    };
+  }
+
+  // ── Historische Kurse ────────────────────────────────────────
 
   async function fetchHistory(symbol) {
-    const key = KEYS.av();
-    if (!key) return null;
-
     const cacheKey = `hist_${symbol}`;
     const cached = cache.get(cacheKey);
     if (cached) return cached;
 
-    try {
-      const data = await fetchJSON(
-        `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${encodeURIComponent(symbol)}&outputsize=compact&apikey=${key}`
-      );
+    let result = null;
 
-      const series = data['Time Series (Daily)'];
-      if (!series) {
-        console.warn('Alpha Vantage:', data['Note'] || data['Information'] || 'Kein Datensatz');
-        return null;
-      }
-
-      const entries = Object.entries(series).slice(0, 120).reverse();
-      const result = {
-        dates:  entries.map(([d]) => d),
-        prices: entries.map(([, v]) => parseFloat(v['4. close'])),
-        highs:  entries.map(([, v]) => parseFloat(v['2. high'])),
-        lows:   entries.map(([, v]) => parseFloat(v['3. low'])),
-        volumes: entries.map(([, v]) => parseInt(v['5. volume']))
-      };
-
-      cache.set(cacheKey, result, 30); // 30-Minuten-Cache
-      return result;
-    } catch (e) {
-      console.error('Alpha Vantage Fehler:', e);
-      return null;
+    // 1. Cloudflare Proxy
+    const proxy = KEYS.proxy();
+    if (proxy) {
+      try {
+        const data = await fetchJSON(`${proxy}/history?symbol=${encodeURIComponent(symbol)}`);
+        result = parseHistoryResponse(data);
+      } catch (e) { console.warn('Proxy /history Fehler:', e); }
     }
+
+    // 2. Alpha Vantage direkt
+    if (!result) {
+      const key = KEYS.av();
+      if (key) {
+        try {
+          const data = await fetchJSON(
+            `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${encodeURIComponent(symbol)}&outputsize=compact&apikey=${key}`
+          );
+          result = parseHistoryResponse(data);
+          if (!result) console.warn('Alpha Vantage:', data['Note'] || data['Information'] || 'Kein Datensatz');
+        } catch (e) { console.error('Alpha Vantage Fehler:', e); }
+      }
+    }
+
+    if (result) cache.set(cacheKey, result, 30);
+    return result;
   }
 
-  // ── Live-Kurs – Finnhub ──────────────────────────────────────
+  // ── Live-Kurs ────────────────────────────────────────────────
 
   async function fetchQuote(symbol) {
+    // 1. Cloudflare Proxy
+    const proxy = KEYS.proxy();
+    if (proxy) {
+      try {
+        const data = await fetchJSON(`${proxy}/quote?symbol=${encodeURIComponent(symbol)}`);
+        if (data.c) return { price: data.c, change: data.d, changePercent: data.dp, high: data.h, low: data.l, open: data.o, prevClose: data.pc };
+      } catch (e) { console.warn('Proxy /quote Fehler:', e); }
+    }
+
+    // 2. Finnhub direkt
     const key = KEYS.fh();
     if (!key) return null;
-
     try {
-      const data = await fetchJSON(
-        `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${key}`
-      );
-
+      const data = await fetchJSON(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${key}`);
       if (!data.c) return null;
-      return {
-        price:         data.c,
-        change:        data.d,
-        changePercent: data.dp,
-        high:          data.h,
-        low:           data.l,
-        open:          data.o,
-        prevClose:     data.pc
-      };
-    } catch (e) {
-      console.error('Finnhub Quote Fehler:', e);
-      return null;
-    }
+      return { price: data.c, change: data.d, changePercent: data.dp, high: data.h, low: data.l, open: data.o, prevClose: data.pc };
+    } catch (e) { console.error('Finnhub Fehler:', e); return null; }
   }
 
-  // ── Aktiensuche – Finnhub ────────────────────────────────────
+  // ── Aktiensuche ──────────────────────────────────────────────
 
   async function searchSymbol(query) {
-    const key = KEYS.fh();
-    if (!key) return demoSuggestions(query);
-
-    try {
-      const data = await fetchJSON(
-        `https://finnhub.io/api/v1/search?q=${encodeURIComponent(query)}&token=${key}`
-      );
-      if (!data.result) return demoSuggestions(query);
-
-      return data.result
-        .filter(r => r.type === 'Common Stock' || r.type === 'EQS')
-        .slice(0, 6)
-        .map(r => ({ symbol: r.symbol, name: r.description, type: r.type }));
-    } catch (e) {
-      console.error('Suche Fehler:', e);
-      return demoSuggestions(query);
+    // 1. Cloudflare Proxy
+    const proxy = KEYS.proxy();
+    if (proxy) {
+      try {
+        const data = await fetchJSON(`${proxy}/search?q=${encodeURIComponent(query)}`);
+        if (data.result) {
+          return data.result
+            .filter(r => r.type === 'Common Stock' || r.type === 'EQS')
+            .slice(0, 6)
+            .map(r => ({ symbol: r.symbol, name: r.description }));
+        }
+      } catch (e) { console.warn('Proxy /search Fehler:', e); }
     }
+
+    // 2. Finnhub direkt
+    const key = KEYS.fh();
+    if (key) {
+      try {
+        const data = await fetchJSON(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(query)}&token=${key}`);
+        if (data.result) {
+          return data.result
+            .filter(r => r.type === 'Common Stock' || r.type === 'EQS')
+            .slice(0, 6)
+            .map(r => ({ symbol: r.symbol, name: r.description }));
+        }
+      } catch (e) { console.error('Suche Fehler:', e); }
+    }
+
+    return demoSuggestions(query);
   }
 
-  // ── Nachrichten – GNews ──────────────────────────────────────
+  // ── Nachrichten ──────────────────────────────────────────────
 
   async function fetchNews(symbol, companyName) {
-    const key = KEYS.gn();
-    if (!key) return demoNews(symbol);
-
     const cacheKey = `news_${symbol}`;
     const cached = cache.get(cacheKey);
     if (cached) return cached;
 
-    try {
-      const query = encodeURIComponent(`${companyName || symbol} Aktie`);
-      const data  = await fetchJSON(
-        `https://gnews.io/api/v4/search?q=${query}&lang=de&max=6&token=${key}`
-      );
+    const q = encodeURIComponent(`${companyName || symbol} Aktie`);
+    let articles = null;
 
-      if (!data.articles) return demoNews(symbol);
-
-      const articles = data.articles.map(a => ({
-        title:       a.title,
-        description: a.description,
-        url:         a.url,
-        source:      a.source?.name || 'Unbekannt',
-        publishedAt: a.publishedAt,
-        timeAgo:     formatTimeAgo(a.publishedAt)
-      }));
-
-      cache.set(cacheKey, articles, 15);
-      return articles;
-    } catch (e) {
-      console.error('GNews Fehler:', e);
-      return demoNews(symbol);
+    // 1. Cloudflare Proxy
+    const proxy = KEYS.proxy();
+    if (proxy) {
+      try {
+        const data = await fetchJSON(`${proxy}/news?q=${q}`);
+        if (data.articles) {
+          articles = data.articles.map(a => ({
+            title: a.title, description: a.description, url: a.url,
+            source: a.source?.name || 'Unbekannt',
+            publishedAt: a.publishedAt, timeAgo: formatTimeAgo(a.publishedAt)
+          }));
+        }
+      } catch (e) { console.warn('Proxy /news Fehler:', e); }
     }
+
+    // 2. GNews direkt
+    if (!articles) {
+      const key = KEYS.gn();
+      if (key) {
+        try {
+          const data = await fetchJSON(`https://gnews.io/api/v4/search?q=${q}&lang=de&max=6&token=${key}`);
+          if (data.articles) {
+            articles = data.articles.map(a => ({
+              title: a.title, description: a.description, url: a.url,
+              source: a.source?.name || 'Unbekannt',
+              publishedAt: a.publishedAt, timeAgo: formatTimeAgo(a.publishedAt)
+            }));
+          }
+        } catch (e) { console.error('GNews Fehler:', e); }
+      }
+    }
+
+    if (articles) { cache.set(cacheKey, articles, 15); return articles; }
+    return demoNews(symbol);
   }
 
   // ── Sentiment-Analyse ────────────────────────────────────────
-  //
-  // Einfache keyword-basierte Analyse – zählt positive/negative Wörter
-  // in Titel + Beschreibung und gibt einen Score 0..1 zurück.
 
-  const POS_WORDS = [
-    'stark', 'gewinn', 'wachstum', 'stieg', 'rekord', 'positiv', 'bullish',
-    'übertrifft', 'kaufen', 'anstieg', 'erhöht', 'übertraf', 'zugelegt',
-    'strong', 'beat', 'surge', 'gain', 'profit', 'growth', 'record',
-    'buy', 'upgrade', 'rise', 'rally', 'boom', 'outperform', 'optimistisch'
-  ];
-
-  const NEG_WORDS = [
-    'verlust', 'rückgang', 'sank', 'schwach', 'bearish', 'verkaufen',
-    'krise', 'risiko', 'enttäuscht', 'verfehlt', 'einbruch', 'warnung',
-    'loss', 'decline', 'fall', 'miss', 'weak', 'sell', 'downgrade',
-    'cut', 'crisis', 'crash', 'drop', 'risk', 'concern', 'warning'
-  ];
+  const POS_WORDS = ['stark','gewinn','wachstum','stieg','rekord','positiv','bullish','übertrifft','kaufen','anstieg','erhöht','übertraf','zugelegt','strong','beat','surge','gain','profit','growth','record','buy','upgrade','rise','rally','boom','outperform','optimistisch'];
+  const NEG_WORDS = ['verlust','rückgang','sank','schwach','bearish','verkaufen','krise','risiko','enttäuscht','verfehlt','einbruch','warnung','loss','decline','fall','miss','weak','sell','downgrade','cut','crisis','crash','drop','risk','concern','warning'];
 
   function analyzeSentiment(articles) {
     const scored = articles.map(article => {
@@ -199,17 +219,12 @@ const API = (() => {
       let pos = 0, neg = 0;
       POS_WORDS.forEach(w => { if (text.includes(w)) pos++; });
       NEG_WORDS.forEach(w => { if (text.includes(w)) neg++; });
-
-      let score = 0.5;
-      if (pos + neg > 0) score = pos / (pos + neg);
-      return { ...article, sentiment: score };
+      return { ...article, sentiment: pos + neg > 0 ? pos / (pos + neg) : 0.5 };
     });
-
-    const overall = scored.length > 0
-      ? scored.reduce((a, b) => a + b.sentiment, 0) / scored.length
-      : 0.5;
-
-    return { articles: scored, overall };
+    return {
+      articles: scored,
+      overall: scored.length > 0 ? scored.reduce((a, b) => a + b.sentiment, 0) / scored.length : 0.5
+    };
   }
 
   // ── Demo-Fallbacks ───────────────────────────────────────────
@@ -231,16 +246,13 @@ const API = (() => {
     { symbol: 'DTE',   name: 'Deutsche Telekom AG' },
     { symbol: 'DBK',   name: 'Deutsche Bank AG' },
     { symbol: 'BAS',   name: 'BASF SE' },
-    { symbol: 'AMZN',  name: 'Amazon.com Inc.' },
     { symbol: 'NFLX',  name: 'Netflix Inc.' },
     { symbol: 'AMD',   name: 'Advanced Micro Devices' },
   ];
 
   function demoSuggestions(query) {
     const q = query.toLowerCase();
-    return POPULAR.filter(s =>
-      s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)
-    ).slice(0, 6);
+    return POPULAR.filter(s => s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)).slice(0, 6);
   }
 
   function demoNews(symbol) {
@@ -252,14 +264,10 @@ const API = (() => {
       { title: `${symbol}: Langfristiger Wachstumstrend laut Experten intakt`, hours: 26, desc: 'Trotz kurzfristiger Schwankungen bleibt das fundamentale Bild positiv.' },
       { title: `Marktausblick: Wie positionieren sich Fonds bei ${symbol}?`, hours: 36, desc: 'Institutionelle Anleger erhöhten zuletzt ihre Positionen.' },
     ];
-
-    return items.map((it, i) => ({
-      title:       it.title,
-      description: it.desc,
-      url:         '#',
-      source:      'Demo News',
+    return items.map(it => ({
+      title: it.title, description: it.desc, url: '#', source: 'Demo News',
       publishedAt: new Date(Date.now() - it.hours * 3600000).toISOString(),
-      timeAgo:     formatTimeAgo(new Date(Date.now() - it.hours * 3600000).toISOString())
+      timeAgo: formatTimeAgo(new Date(Date.now() - it.hours * 3600000).toISOString())
     }));
   }
 

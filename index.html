@@ -263,30 +263,38 @@
       </div>
       <div class="modal-body">
         <p class="modal-desc">
-          Alle API-Keys sind <strong>kostenlos</strong> erhältlich und werden ausschließlich
-          lokal in Ihrem Browser gespeichert – kein Server, keine Weitergabe.
+          Alle Einstellungen werden ausschließlich lokal in Ihrem Browser gespeichert.
+          Mit der Proxy-URL brauchen Besucher keine eigenen API-Keys.
         </p>
+
+        <div class="key-group key-group-proxy">
+          <label>Cloudflare Proxy-URL <span class="key-badge key-badge-green">Empfohlen</span></label>
+          <small>→ Einmal einrichten, alle Besucher nutzen die Echtzeit-Daten automatisch</small>
+          <input type="text" id="proxyUrl" placeholder="https://claude-forecast.DEIN-NAME.workers.dev">
+        </div>
+
+        <div class="modal-divider"><span>oder direkte API-Keys (nur für Sie persönlich)</span></div>
 
         <div class="key-group">
           <label>Alpha Vantage <span class="key-badge">Historische Kurse</span></label>
-          <small>→ Kostenlos registrieren: <a href="https://www.alphavantage.co/support/#api-key" target="_blank" rel="noopener">alphavantage.co</a></small>
-          <input type="password" id="avKey" placeholder="Ihren Alpha Vantage Key eingeben…">
+          <small>→ Kostenlos: <a href="https://www.alphavantage.co/support/#api-key" target="_blank" rel="noopener">alphavantage.co</a></small>
+          <input type="password" id="avKey" placeholder="Alpha Vantage Key…">
         </div>
 
         <div class="key-group">
           <label>Finnhub <span class="key-badge">Live-Kurse &amp; Suche</span></label>
-          <small>→ Kostenlos registrieren: <a href="https://finnhub.io/register" target="_blank" rel="noopener">finnhub.io</a></small>
-          <input type="password" id="fhKey" placeholder="Ihren Finnhub Key eingeben…">
+          <small>→ Kostenlos: <a href="https://finnhub.io/register" target="_blank" rel="noopener">finnhub.io</a></small>
+          <input type="password" id="fhKey" placeholder="Finnhub Key…">
         </div>
 
         <div class="key-group">
           <label>GNews <span class="key-badge">Nachrichten</span></label>
-          <small>→ Kostenlos registrieren: <a href="https://gnews.io" target="_blank" rel="noopener">gnews.io</a></small>
-          <input type="password" id="gnKey" placeholder="Ihren GNews Key eingeben…">
+          <small>→ Kostenlos: <a href="https://gnews.io" target="_blank" rel="noopener">gnews.io</a></small>
+          <input type="password" id="gnKey" placeholder="GNews Key…">
         </div>
 
         <div class="modal-actions">
-          <button id="clearKeys" class="btn-ghost">Keys löschen</button>
+          <button id="clearKeys" class="btn-ghost">Alles löschen</button>
           <button id="saveKeys" class="btn-primary">Speichern &amp; neu laden</button>
         </div>
       </div>

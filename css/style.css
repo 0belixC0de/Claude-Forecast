@@ -616,6 +616,33 @@ main {
 .key-group input:focus { border-color: var(--cyan); }
 .key-group input::placeholder { color: var(--muted2); font-family: inherit; }
 
+.key-group-proxy input {
+  border-color: rgba(16, 185, 129, .35);
+}
+.key-group-proxy input:focus { border-color: var(--green); }
+
+.key-badge-green {
+  background: rgba(16, 185, 129, .12);
+  color: var(--green);
+  border-color: rgba(16, 185, 129, .25);
+}
+
+.modal-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 14px;
+  color: var(--muted2);
+  font-size: 11px;
+}
+.modal-divider::before,
+.modal-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
 .modal-actions {
   display: flex;
   gap: 10px;
