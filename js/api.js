@@ -233,25 +233,47 @@ const API = (() => {
     const hit = cache.get(ck);
     if (hit) return hit;
 
-    const q = encodeURIComponent(`${name || symbol} Aktie`);
     let articles = null;
 
+    // 1. Proxy (Finnhub company-news via Cloudflare Worker)
     const proxy = KEYS.proxy();
     if (proxy) {
       try {
+        const q = encodeURIComponent(`${name || symbol} Aktie`);
         const d = await fetchJSON(`${proxy}/news?symbol=${encodeURIComponent(symbol)}&q=${q}`);
-        if (d.articles) articles = d.articles.map(mapArticle);
+        if (d.articles && d.articles.length > 0) articles = d.articles.map(mapArticle);
       } catch {}
     }
+
+    // 2. Yahoo Finance RSS via rss2json.com (free, no key, real links)
+    if (!articles) {
+      try {
+        const rssUrl = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(symbol)}&region=US&lang=en-US`;
+        const d = await fetchJSON(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=6`);
+        if (d.status === 'ok' && d.items?.length > 0) {
+          articles = d.items.map(a => ({
+            title:       a.title,
+            description: (a.description || '').replace(/<[^>]+>/g, '').slice(0, 180),
+            url:         a.link,
+            source:      'Yahoo Finance',
+            publishedAt: new Date(a.pubDate).toISOString(),
+            timeAgo:     timeAgo(a.pubDate)
+          }));
+        }
+      } catch {}
+    }
+
+    // 3. GNews direct (if user configured key)
     if (!articles && KEYS.gn()) {
       try {
+        const q = encodeURIComponent(`${name || symbol} Aktie`);
         const d = await fetchJSON(`https://gnews.io/api/v4/search?q=${q}&lang=de&max=6&token=${KEYS.gn()}`);
-        if (d.articles) articles = d.articles.map(mapArticle);
+        if (d.articles?.length > 0) articles = d.articles.map(mapArticle);
       } catch {}
     }
 
     const result = articles || demoNews(symbol);
-    if (articles) cache.set(ck, result, 15);
+    if (articles?.length > 0) cache.set(ck, result, 15);
     return result;
   }
 
