@@ -683,7 +683,7 @@ const App = (() => {
   }
   function clearKeys() { API.KEYS.clear(); loadModalKeys(); updateDemoBanner(); }
   function updateDemoBanner() {
-    const hide = !S.isOwner || API.KEYS.hasCustom();
+    const hide = !S.isOwner || !!API.KEYS.proxy();
     document.getElementById('demoBanner').classList.toggle('hidden', hide);
   }
 
