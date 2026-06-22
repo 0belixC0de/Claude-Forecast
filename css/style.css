@@ -475,6 +475,8 @@ main {
 .news-item { display: block; padding: 10px 0; border-bottom: 1px solid var(--border); text-decoration: none; color: inherit; cursor: pointer; }
 .news-item:last-child { border-bottom: none; }
 .news-item:hover .news-title { color: var(--accent); }
+.news-demo { cursor: default; }
+.news-demo:hover .news-title { color: inherit; }
 .news-top { display: flex; align-items: flex-start; gap: 7px; margin-bottom: 4px; }
 .news-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
 .news-dot.positive { background: var(--green); }
