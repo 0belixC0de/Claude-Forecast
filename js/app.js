@@ -6,14 +6,6 @@ const App = (() => {
 
   // ── State ────────────────────────────────────────────────────
 
-  function isOwnerMode() {
-    if (new URLSearchParams(location.search).has('admin')) {
-      localStorage.setItem('cf_owner', '1');
-      return true;
-    }
-    return localStorage.getItem('cf_owner') === '1';
-  }
-
   const S = {
     symbol: 'AAPL', name: 'Apple Inc.', exchange: 'NASDAQ', sector: 'Technology',
     allDates: [], allPrices: [], allOpens: [], allHighs: [], allLows: [],
@@ -21,7 +13,7 @@ const App = (() => {
     period: '1M', chartType: 'line', forecastDays: 7,
     lang: localStorage.getItem('cf_lang') || 'de',
     forecast: null, chart: null, refreshTimer: null, lastPrice: null,
-    isOwner: isOwnerMode()
+    isOwner: false
   };
 
   // ── i18n ─────────────────────────────────────────────────────
@@ -47,9 +39,99 @@ const App = (() => {
     remove(sym) { localStorage.setItem('cf_wl', JSON.stringify(WL.get().filter(s => s.symbol !== sym))); }
   };
 
+  // ── Auth / Login ──────────────────────────────────────────────
+
+  function showLoginScreen() {
+    const el = document.getElementById('loginScreen');
+    el.removeAttribute('hidden');
+    requestAnimationFrame(() => el.classList.add('visible'));
+  }
+
+  function hideLoginScreen() {
+    const el = document.getElementById('loginScreen');
+    el.classList.remove('visible');
+    setTimeout(() => { el.hidden = true; }, 250);
+  }
+
+  function bindAuth() {
+    // Tab switching
+    document.getElementById('loginTabs').addEventListener('click', e => {
+      const tab = e.target.closest('[data-tab]');
+      if (!tab) return;
+      document.querySelectorAll('.login-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab.dataset.tab));
+      document.getElementById('authLogin').hidden    = tab.dataset.tab !== 'login';
+      document.getElementById('authRegister').hidden = tab.dataset.tab !== 'register';
+    });
+
+    // Login
+    async function doLogin() {
+      const user = document.getElementById('loginUser').value.trim();
+      const pass = document.getElementById('loginPass').value;
+      const err  = document.getElementById('loginError');
+      err.hidden = true;
+      if (!user || !pass) { err.textContent = 'Bitte alle Felder ausfüllen'; err.hidden = false; return; }
+      const res = await Auth.login(user, pass);
+      if (res.ok) { S.isOwner = false; hideLoginScreen(); await startApp(); }
+      else { err.textContent = res.msg; err.hidden = false; }
+    }
+    document.getElementById('loginBtn').addEventListener('click', doLogin);
+    ['loginUser','loginPass'].forEach(id =>
+      document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); })
+    );
+
+    // Register
+    async function doRegister() {
+      const user  = document.getElementById('regUser').value.trim();
+      const pass  = document.getElementById('regPass').value;
+      const pass2 = document.getElementById('regPass2').value;
+      const err   = document.getElementById('regError');
+      err.hidden = true;
+      if (!user || !pass || !pass2) { err.textContent = 'Bitte alle Felder ausfüllen'; err.hidden = false; return; }
+      if (pass !== pass2) { err.textContent = 'Passwörter stimmen nicht überein'; err.hidden = false; return; }
+      const res = await Auth.register(user, pass);
+      if (res.ok) { S.isOwner = false; hideLoginScreen(); await startApp(); }
+      else { err.textContent = res.msg; err.hidden = false; }
+    }
+    document.getElementById('registerBtn').addEventListener('click', doRegister);
+
+    // Admin toggle
+    document.getElementById('adminToggle').addEventListener('click', () => {
+      const form = document.getElementById('adminForm');
+      form.hidden = !form.hidden;
+      const hint = document.getElementById('adminHint');
+      const hasSetup = !!localStorage.getItem('cf_admin_hash');
+      hint.textContent = hasSetup ? '' : 'Erstes Mal: Lege hier dein Admin-Passwort fest.';
+      hint.hidden = hasSetup;
+    });
+
+    // Admin login
+    async function doAdminLogin() {
+      const pass = document.getElementById('adminPass').value;
+      const err  = document.getElementById('adminError');
+      err.hidden = true;
+      if (!pass) { err.textContent = 'Passwort eingeben'; err.hidden = false; return; }
+      const res = await Auth.loginAdmin(pass);
+      if (res.ok) { S.isOwner = true; hideLoginScreen(); await startApp(); }
+      else { err.textContent = res.msg; err.hidden = false; }
+    }
+    document.getElementById('adminLoginBtn').addEventListener('click', doAdminLogin);
+    document.getElementById('adminPass').addEventListener('keydown', e => { if (e.key === 'Enter') doAdminLogin(); });
+  }
+
   // ── Init ─────────────────────────────────────────────────────
 
   async function init() {
+    if (!Auth.isLoggedIn()) {
+      showLoginScreen();
+      bindAuth();
+    } else {
+      S.isOwner = Auth.isAdmin();
+      document.getElementById('loginScreen').hidden = true;
+      await startApp();
+    }
+  }
+
+  async function startApp() {
     applyLang();
     applyOwnerMode();
     bindUI();
@@ -66,29 +148,18 @@ const App = (() => {
 
   function applyOwnerMode() {
     document.getElementById('settingsBtn').hidden = !S.isOwner;
+    // User badge
+    const badge = document.getElementById('userBadge');
+    const name  = Auth.username();
+    if (name) {
+      badge.textContent = S.isOwner ? `👑 ${name}` : name;
+      badge.className   = 'user-badge' + (S.isOwner ? ' admin-badge' : '');
+      badge.hidden      = false;
+    }
+    document.getElementById('logoutBtn').hidden = false;
   }
 
   function bindUI() {
-    // Logo triple-click → toggle owner mode
-    let logoTaps = 0, logoTimer;
-    document.querySelector('.logo').style.cursor = 'default';
-    document.querySelector('.logo').addEventListener('click', () => {
-      logoTaps++;
-      clearTimeout(logoTimer);
-      logoTimer = setTimeout(() => { logoTaps = 0; }, 600);
-      if (logoTaps >= 3) {
-        logoTaps = 0;
-        S.isOwner = !S.isOwner;
-        if (S.isOwner) { localStorage.setItem('cf_owner', '1'); } else { localStorage.removeItem('cf_owner'); }
-        applyOwnerMode();
-        updateDemoBanner();
-        const logo = document.querySelector('.logo-icon');
-        logo.style.transition = 'opacity .15s';
-        logo.style.opacity = '0.3';
-        setTimeout(() => { logo.style.opacity = ''; }, 300);
-      }
-    });
-
     // Search
     document.getElementById('searchBtn').addEventListener('click', doSearch);
     document.getElementById('stockSearch').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
@@ -152,6 +223,23 @@ const App = (() => {
     document.getElementById('settingsModal').addEventListener('click', e => { if (e.target === document.getElementById('settingsModal')) closeModal(); });
     document.getElementById('saveKeys').addEventListener('click', saveKeys);
     document.getElementById('clearKeys').addEventListener('click', clearKeys);
+
+    // Admin password change
+    document.getElementById('changeAdminPassBtn').addEventListener('click', async () => {
+      const pw  = document.getElementById('newAdminPass').value;
+      const msg = document.getElementById('adminPassMsg');
+      const res = await Auth.changeAdminPassword(pw);
+      msg.textContent = res.ok ? '✓ Passwort gespeichert' : res.msg;
+      msg.style.color = res.ok ? 'var(--accent)' : '#f87171';
+      msg.hidden = false;
+      if (res.ok) { document.getElementById('newAdminPass').value = ''; setTimeout(() => { msg.hidden = true; }, 2500); }
+    });
+
+    // Logout
+    document.getElementById('logoutBtn').addEventListener('click', () => {
+      Auth.clearSession();
+      location.reload();
+    });
   }
 
   // ── Load stock ───────────────────────────────────────────────
@@ -599,7 +687,25 @@ const App = (() => {
 
   // ── Settings ─────────────────────────────────────────────────
 
-  function openModal()  { document.getElementById('settingsModal').hidden = false; document.body.style.overflow='hidden'; }
+  function openModal() {
+    document.getElementById('settingsModal').hidden = false;
+    document.body.style.overflow = 'hidden';
+    const adminSection = document.getElementById('adminPanelSection');
+    adminSection.hidden = !S.isOwner;
+    if (S.isOwner) {
+      const users = Auth.listUsers();
+      const el = document.getElementById('userListEl');
+      el.innerHTML = users.length
+        ? users.map(u => `<div class="user-list-item"><span>${escH(u)}</span><button class="ul-rm" data-name="${esc(u)}">Entfernen</button></div>`).join('')
+        : '<span style="color:var(--muted);font-size:.85rem">Noch keine Nutzer registriert.</span>';
+      el.querySelectorAll('.ul-rm').forEach(btn => {
+        btn.addEventListener('click', () => {
+          Auth.removeUser(btn.dataset.name);
+          openModal(); // re-render
+        });
+      });
+    }
+  }
   function closeModal() { document.getElementById('settingsModal').hidden = true;  document.body.style.overflow=''; }
   function loadModalKeys() {
     document.getElementById('proxyUrl').value = API.KEYS.proxy();

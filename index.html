@@ -14,6 +14,49 @@
 </head>
 <body>
 
+<!-- ═══ LOGIN SCREEN ═══ -->
+<div id="loginScreen" class="login-screen">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg class="logo-icon" viewBox="0 0 36 36" fill="none">
+        <polyline points="3,26 10,16 18,20 27,7 33,13" stroke="#d4884a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="27,7 33,7 33,13" stroke="#d4884a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span class="logo-text">Claude<span class="logo-accent">Forecast</span></span>
+    </div>
+
+    <div class="login-tabs" id="loginTabs">
+      <button class="login-tab active" data-tab="login">Anmelden</button>
+      <button class="login-tab" data-tab="register">Registrieren</button>
+    </div>
+
+    <div class="auth-form" id="authLogin">
+      <input class="auth-input" type="text"     id="loginUser" placeholder="Benutzername"  autocomplete="username">
+      <input class="auth-input" type="password" id="loginPass" placeholder="Passwort"       autocomplete="current-password">
+      <p class="auth-error" id="loginError" hidden></p>
+      <button class="btn-accent auth-btn" id="loginBtn">Anmelden</button>
+    </div>
+
+    <div class="auth-form" id="authRegister" hidden>
+      <input class="auth-input" type="text"     id="regUser"  placeholder="Benutzername wählen"        autocomplete="username">
+      <input class="auth-input" type="password" id="regPass"  placeholder="Passwort (mind. 6 Zeichen)" autocomplete="new-password">
+      <input class="auth-input" type="password" id="regPass2" placeholder="Passwort bestätigen"        autocomplete="new-password">
+      <p class="auth-error" id="regError" hidden></p>
+      <button class="btn-accent auth-btn" id="registerBtn">Konto erstellen</button>
+    </div>
+
+    <div class="admin-sep">
+      <button class="admin-toggle-btn" id="adminToggle">🔑 Admin-Zugang</button>
+      <div class="auth-form" id="adminForm" hidden>
+        <p class="auth-hint" id="adminHint" hidden></p>
+        <input class="auth-input" type="password" id="adminPass" placeholder="Admin-Passwort" autocomplete="current-password">
+        <p class="auth-error" id="adminError" hidden></p>
+        <button class="btn-accent auth-btn" id="adminLoginBtn">Als Admin anmelden</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ═══ HEADER ═══ -->
 <header class="site-header">
   <div class="logo">
@@ -37,6 +80,7 @@
   </div>
 
   <div class="header-actions">
+    <span id="userBadge" class="user-badge" hidden></span>
     <button id="langToggle" class="btn-ghost-sm" title="Sprache wechseln">EN</button>
     <button id="settingsBtn" class="btn-ghost-sm" hidden>
       <svg viewBox="0 0 18 18" fill="none">
@@ -45,6 +89,7 @@
       </svg>
       <span data-i18n="settings_title">Einstellungen</span>
     </button>
+    <button id="logoutBtn" class="btn-ghost-sm btn-logout" hidden>↩ Abmelden</button>
   </div>
 </header>
 
@@ -282,6 +327,20 @@
         <small>→ <a href="https://gnews.io" target="_blank" rel="noopener">gnews.io</a></small>
         <input type="password" id="gnKey" placeholder="GNews Key…">
       </div>
+      <div id="adminPanelSection" hidden>
+        <div class="modal-divider"><span>Admin-Bereich</span></div>
+        <div class="key-group">
+          <label>Admin-Passwort ändern</label>
+          <input type="password" id="newAdminPass" placeholder="Neues Passwort (mind. 6 Zeichen)">
+          <button id="changeAdminPassBtn" class="btn-accent" style="margin-top:.5rem;width:100%">Passwort speichern</button>
+          <p id="adminPassMsg" style="font-size:.8rem;text-align:center;margin:.4rem 0 0;color:var(--accent)" hidden></p>
+        </div>
+        <div class="key-group">
+          <label>Registrierte Nutzer</label>
+          <div id="userListEl" class="user-list"></div>
+        </div>
+      </div>
+
       <div class="modal-actions">
         <button id="clearKeys" class="btn-ghost" data-i18n="settings_clear">Alles löschen</button>
         <button id="saveKeys" class="btn-accent" data-i18n="settings_save">Speichern & neu laden</button>
@@ -299,6 +358,7 @@
 <script src="js/forecast.js"></script>
 <script src="js/lang.js"></script>
 <script src="js/api.js"></script>
+<script src="js/auth.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
