@@ -71,7 +71,7 @@ const App = (() => {
       err.hidden = true;
       if (!user || !pass) { err.textContent = 'Bitte alle Felder ausfüllen'; err.hidden = false; return; }
       const res = await Auth.login(user, pass);
-      if (res.ok) { S.isOwner = false; hideLoginScreen(); applyOwnerMode(); updateDemoBanner(); }
+      if (res.ok) { S.isOwner = false; hideLoginScreen(); applyOwnerMode(); updateDemoBanner(); setTimeout(() => { if (S.chart) { S.chart.resize(); updateChart(); } }, 300); }
       else { err.textContent = res.msg; err.hidden = false; }
     }
     document.getElementById('loginBtn').addEventListener('click', doLogin);
@@ -89,7 +89,7 @@ const App = (() => {
       if (!user || !pass || !pass2) { err.textContent = 'Bitte alle Felder ausfüllen'; err.hidden = false; return; }
       if (pass !== pass2) { err.textContent = 'Passwörter stimmen nicht überein'; err.hidden = false; return; }
       const res = await Auth.register(user, pass);
-      if (res.ok) { S.isOwner = false; hideLoginScreen(); applyOwnerMode(); updateDemoBanner(); }
+      if (res.ok) { S.isOwner = false; hideLoginScreen(); applyOwnerMode(); updateDemoBanner(); setTimeout(() => { if (S.chart) { S.chart.resize(); updateChart(); } }, 300); }
       else { err.textContent = res.msg; err.hidden = false; }
     }
     document.getElementById('registerBtn').addEventListener('click', doRegister);
@@ -111,7 +111,7 @@ const App = (() => {
       err.hidden = true;
       if (!pass) { err.textContent = 'Passwort eingeben'; err.hidden = false; return; }
       const res = await Auth.loginAdmin(pass);
-      if (res.ok) { S.isOwner = true; hideLoginScreen(); applyOwnerMode(); updateDemoBanner(); }
+      if (res.ok) { S.isOwner = true; hideLoginScreen(); applyOwnerMode(); updateDemoBanner(); setTimeout(() => { if (S.chart) { S.chart.resize(); updateChart(); } }, 300); }
       else { err.textContent = res.msg; err.hidden = false; }
     }
     document.getElementById('adminLoginBtn').addEventListener('click', doAdminLogin);
@@ -518,11 +518,13 @@ const App = (() => {
 
     document.getElementById('newsList').innerHTML = articles.map(a => {
       const sc = a.sentiment > .6 ? 'positive' : a.sentiment < .4 ? 'negative' : 'neutral';
-      const hr = a.url !== '#' ? ` target="_blank" rel="noopener"` : '';
-      return `<a class="news-item" href="${esc(a.url)}"${hr}>
+      const isReal = a.url && a.url !== '#';
+      const tag  = isReal ? 'a' : 'div';
+      const attr = isReal ? ` href="${esc(a.url)}" target="_blank" rel="noopener noreferrer"` : '';
+      return `<${tag} class="news-item"${attr}>
         <div class="news-top"><span class="news-dot ${sc}"></span><span class="news-title">${escH(a.title)}</span></div>
         <div class="news-meta"><span>${escH(a.source)}</span><span>·</span><span>${escH(a.timeAgo)}</span></div>
-      </a>`;
+      </${tag}>`;
     }).join('');
   }
 
