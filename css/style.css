@@ -607,7 +607,9 @@ main {
   position: fixed;
   inset: 0;
   z-index: 9999;
-  background: var(--bg);
+  background: rgba(10, 8, 6, 0.78);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -616,8 +618,8 @@ main {
   pointer-events: none;
   transition: opacity .25s;
 }
-.login-screen.visible   { opacity: 1; pointer-events: all; }
-.login-screen[hidden]   { display: none; }
+.login-screen.visible { opacity: 1; pointer-events: all; }
+.login-screen[hidden] { display: none; }
 
 .login-card {
   background: var(--card);

@@ -71,7 +71,7 @@ const App = (() => {
       err.hidden = true;
       if (!user || !pass) { err.textContent = 'Bitte alle Felder ausfüllen'; err.hidden = false; return; }
       const res = await Auth.login(user, pass);
-      if (res.ok) { S.isOwner = false; hideLoginScreen(); await startApp(); }
+      if (res.ok) { S.isOwner = false; hideLoginScreen(); applyOwnerMode(); updateDemoBanner(); }
       else { err.textContent = res.msg; err.hidden = false; }
     }
     document.getElementById('loginBtn').addEventListener('click', doLogin);
@@ -89,7 +89,7 @@ const App = (() => {
       if (!user || !pass || !pass2) { err.textContent = 'Bitte alle Felder ausfüllen'; err.hidden = false; return; }
       if (pass !== pass2) { err.textContent = 'Passwörter stimmen nicht überein'; err.hidden = false; return; }
       const res = await Auth.register(user, pass);
-      if (res.ok) { S.isOwner = false; hideLoginScreen(); await startApp(); }
+      if (res.ok) { S.isOwner = false; hideLoginScreen(); applyOwnerMode(); updateDemoBanner(); }
       else { err.textContent = res.msg; err.hidden = false; }
     }
     document.getElementById('registerBtn').addEventListener('click', doRegister);
@@ -111,7 +111,7 @@ const App = (() => {
       err.hidden = true;
       if (!pass) { err.textContent = 'Passwort eingeben'; err.hidden = false; return; }
       const res = await Auth.loginAdmin(pass);
-      if (res.ok) { S.isOwner = true; hideLoginScreen(); await startApp(); }
+      if (res.ok) { S.isOwner = true; hideLoginScreen(); applyOwnerMode(); updateDemoBanner(); }
       else { err.textContent = res.msg; err.hidden = false; }
     }
     document.getElementById('adminLoginBtn').addEventListener('click', doAdminLogin);
@@ -121,27 +121,24 @@ const App = (() => {
   // ── Init ─────────────────────────────────────────────────────
 
   async function init() {
+    // App always boots in the background
+    S.isOwner = Auth.isLoggedIn() ? Auth.isAdmin() : false;
+    applyLang();
+    initChart();
+    bindUI();
+    loadModalKeys();
+    updateDemoBanner();
+    loadMarketBar();
+    renderWatchlist();
+    loadStock(S.symbol, S.name, S.exchange, S.sector);
+    startAutoRefresh();
+
     if (!Auth.isLoggedIn()) {
       showLoginScreen();
       bindAuth();
     } else {
-      S.isOwner = Auth.isAdmin();
-      document.getElementById('loginScreen').hidden = true;
-      await startApp();
+      applyOwnerMode();
     }
-  }
-
-  async function startApp() {
-    applyLang();
-    applyOwnerMode();
-    bindUI();
-    loadModalKeys();
-    updateDemoBanner();
-    initChart();
-    loadMarketBar();
-    renderWatchlist();
-    await loadStock(S.symbol, S.name, S.exchange, S.sector);
-    startAutoRefresh();
   }
 
   // ── Events ───────────────────────────────────────────────────
