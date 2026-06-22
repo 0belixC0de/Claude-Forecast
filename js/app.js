@@ -1,525 +1,572 @@
 /* ═══════════════════════════════════════════
-   App Controller – UI-Orchestrierung
+   App Controller
    ═══════════════════════════════════════════ */
 
 const App = (() => {
 
-  // ── Anwendungszustand ────────────────────────────────────────
+  // ── State ────────────────────────────────────────────────────
 
-  const state = {
-    symbol:      'AAPL',
-    name:        'Apple Inc.',
-    exchange:    'NASDAQ',
-    sector:      'Technologie',
-    allDates:    [],
-    allPrices:   [],
-    period:      '1M',
-    forecast:    null,
-    chart:       null,
-    refreshTimer: null,
-    lastPrice:   null
+  const S = {
+    symbol: 'AAPL', name: 'Apple Inc.', exchange: 'NASDAQ', sector: 'Technology',
+    allDates: [], allPrices: [], allOpens: [], allHighs: [], allLows: [],
+    intradayData: null,
+    period: '1M', chartType: 'line', forecastDays: 7,
+    lang: localStorage.getItem('cf_lang') || 'de',
+    forecast: null, chart: null, refreshTimer: null, lastPrice: null
   };
 
-  // ── Initialisierung ──────────────────────────────────────────
+  // ── i18n ─────────────────────────────────────────────────────
+
+  function t(key) { return LANG[S.lang]?.[key] || LANG.de[key] || key; }
+
+  function applyLang() {
+    document.documentElement.lang = S.lang;
+    document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+    document.querySelectorAll('[data-i18n-ph]').forEach(el => { el.placeholder = t(el.dataset.i18nPh); });
+    document.getElementById('langToggle').textContent = S.lang === 'de' ? 'EN' : 'DE';
+  }
+
+  // ── Watchlist ────────────────────────────────────────────────
+
+  const WL = {
+    get: () => { try { return JSON.parse(localStorage.getItem('cf_wl') || '[]'); } catch { return []; } },
+    has: sym => WL.get().some(s => s.symbol === sym),
+    add(sym, name) {
+      const list = WL.get();
+      if (!list.find(s => s.symbol === sym)) { list.push({ symbol: sym, name }); localStorage.setItem('cf_wl', JSON.stringify(list)); }
+    },
+    remove(sym) { localStorage.setItem('cf_wl', JSON.stringify(WL.get().filter(s => s.symbol !== sym))); }
+  };
+
+  // ── Init ─────────────────────────────────────────────────────
 
   async function init() {
+    applyLang();
     bindUI();
     loadModalKeys();
     updateDemoBanner();
     initChart();
-    await loadStock(state.symbol, state.name, state.exchange, state.sector);
+    loadMarketBar();
+    renderWatchlist();
+    await loadStock(S.symbol, S.name, S.exchange, S.sector);
     startAutoRefresh();
   }
 
-  // ── Event-Binding ────────────────────────────────────────────
+  // ── Events ───────────────────────────────────────────────────
 
   function bindUI() {
     // Search
-    document.getElementById('searchBtn').addEventListener('click', handleSearch);
-    document.getElementById('stockSearch').addEventListener('keydown', e => {
-      if (e.key === 'Enter') handleSearch();
-    });
-    document.getElementById('stockSearch').addEventListener('input', debounce(handleSuggest, 280));
-    document.addEventListener('click', e => {
-      if (!e.target.closest('.search-wrapper')) hideSuggestions();
+    document.getElementById('searchBtn').addEventListener('click', doSearch);
+    document.getElementById('stockSearch').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+    document.getElementById('stockSearch').addEventListener('input', debounce(doSuggest, 280));
+    document.addEventListener('click', e => { if (!e.target.closest('.search-wrapper')) hideSug(); });
+
+    // Language
+    document.getElementById('langToggle').addEventListener('click', () => {
+      S.lang = S.lang === 'de' ? 'en' : 'de';
+      localStorage.setItem('cf_lang', S.lang);
+      applyLang();
+      updateDemoBanner();
     });
 
-    // Period tabs
-    document.getElementById('periodTabs').addEventListener('click', e => {
-      const btn = e.target.closest('.tab');
+    // Chart type
+    document.getElementById('chartTypeToggle').addEventListener('click', e => {
+      const btn = e.target.closest('.type-btn');
       if (!btn) return;
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      state.period = btn.dataset.period;
+      S.chartType = btn.dataset.type;
+      rebuildChart();
       updateChart();
     });
 
-    // Settings modal
+    // Period
+    document.getElementById('periodTabs').addEventListener('click', e => {
+      const btn = e.target.closest('.tab');
+      if (!btn) return;
+      document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      S.period = btn.dataset.period;
+      if (S.period === '1T') loadIntraday(); else updateChart();
+    });
+
+    // Forecast period
+    document.getElementById('fcPeriodTabs').addEventListener('click', e => {
+      const btn = e.target.closest('.fc-tab');
+      if (!btn) return;
+      document.querySelectorAll('.fc-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      S.forecastDays = parseInt(btn.dataset.days);
+      if (S.allPrices.length) {
+        S.forecast = Forecast.generate(S.allPrices, S.forecast?.sentimentScore ?? 0.5, S.forecastDays);
+        updateForecastCard(S.forecast);
+        updateChart();
+      }
+    });
+
+    // Watchlist toggle button
+    document.getElementById('watchlistToggleBtn').addEventListener('click', () => {
+      if (WL.has(S.symbol)) { WL.remove(S.symbol); } else { WL.add(S.symbol, S.name); }
+      updateWatchlistBtn();
+      renderWatchlist();
+    });
+
+    // Settings
     document.getElementById('settingsBtn').addEventListener('click', openModal);
     document.getElementById('openSetup').addEventListener('click', e => { e.preventDefault(); openModal(); });
     document.getElementById('closeModal').addEventListener('click', closeModal);
-    document.getElementById('settingsModal').addEventListener('click', e => {
-      if (e.target === document.getElementById('settingsModal')) closeModal();
-    });
+    document.getElementById('settingsModal').addEventListener('click', e => { if (e.target === document.getElementById('settingsModal')) closeModal(); });
     document.getElementById('saveKeys').addEventListener('click', saveKeys);
     document.getElementById('clearKeys').addEventListener('click', clearKeys);
   }
 
-  // ── Haupt-Datenladevorgang ───────────────────────────────────
+  // ── Load stock ───────────────────────────────────────────────
 
   async function loadStock(symbol, name, exchange = '', sector = '') {
-    showLoading(`Kursdaten für ${symbol} werden geladen…`);
-
+    showLoading(t('loading'));
     try {
-      // 1. Historische Daten abrufen (Alpha Vantage → Demo-Fallback)
-      let histData = await API.fetchHistory(symbol);
-      const isDemo = !histData;
-
-      if (isDemo) {
-        const seed = symbol.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-        const startPrice = seed % 300 + 50;
-        histData = Forecast.demoData(120, startPrice, seed);
+      let hist = await API.fetchHistory(symbol);
+      if (!hist) {
+        const seed = symbol.split('').reduce((a,c) => a + c.charCodeAt(0), 0);
+        hist = Forecast.demoData(120, seed % 300 + 50, seed);
       }
 
-      state.allDates  = histData.dates;
-      state.allPrices = histData.prices;
-      state.symbol    = symbol;
-      state.name      = name;
-      state.exchange  = exchange;
-      state.sector    = sector;
+      S.symbol   = symbol;
+      S.name     = name;
+      S.exchange = exchange;
+      S.sector   = sector;
+      S.allDates  = hist.dates;
+      S.allPrices = hist.prices;
+      S.allOpens  = hist.opens  || hist.prices;
+      S.allHighs  = hist.highs  || hist.prices;
+      S.allLows   = hist.lows   || hist.prices;
+      S.intradayData = null;
 
-      // 2. Live-Kurs abrufen (Finnhub → Demo-Fallback)
       const quote = await API.fetchQuote(symbol);
-      const livePrice = quote?.price ?? state.allPrices[state.allPrices.length - 1];
-      const liveChange       = quote?.change ?? (livePrice - state.allPrices[state.allPrices.length - 2]);
-      const liveChangePercent = quote?.changePercent ?? (liveChange / state.allPrices[state.allPrices.length - 2] * 100);
+      const price = quote?.price ?? S.allPrices[S.allPrices.length - 1];
+      const chg   = quote?.change ?? (price - S.allPrices[S.allPrices.length - 2]);
+      const chgPct = quote?.changePercent ?? (chg / S.allPrices[S.allPrices.length - 2] * 100);
 
-      // 3. Nachrichten + Sentiment
       const rawNews = await API.fetchNews(symbol, name);
       const { articles, overall } = API.analyzeSentiment(rawNews);
 
-      // 4. Prognose berechnen
-      const prices4cast = [...state.allPrices];
-      // letzten Kurs ggf. durch Live-Kurs ersetzen
-      if (quote?.price) prices4cast[prices4cast.length - 1] = quote.price;
-      state.forecast = Forecast.generate(prices4cast, overall, 7);
+      const p4c = [...S.allPrices];
+      if (quote?.price) p4c[p4c.length - 1] = quote.price;
+      S.forecast = Forecast.generate(p4c, overall, S.forecastDays);
+      if (S.forecast) S.forecast.sentimentScore = overall;
 
-      // 5. UI aktualisieren
+      document.title = `${symbol} – Claude Forecast`;
       updateHeader(name, symbol, exchange, sector);
-      updatePrice(livePrice, liveChange, liveChangePercent);
+      updatePrice(price, chg, chgPct);
+      updateWatchlistBtn();
+      rebuildChart();
       updateChart();
-      updateIndicators(prices4cast);
-      updateForecastCard(state.forecast, livePrice);
+      updateIndicators(p4c);
+      updateForecastCard(S.forecast);
       updateNews(articles, overall);
       updateDemoBanner();
-    } catch (err) {
-      console.error('loadStock Fehler:', err);
-    }
-
+    } catch (e) { console.error('loadStock:', e); }
     hideLoading();
   }
 
-  // ── Chart-Initialisierung ────────────────────────────────────
+  // ── Intraday ──────────────────────────────────────────────────
+
+  async function loadIntraday() {
+    showLoading(t('loading'));
+    const now  = Math.floor(Date.now() / 1000);
+    const from = now - 2 * 86400; // last 2 days for safety
+    const data = await API.fetchCandle(S.symbol, '5', from, now);
+    if (data && data.prices.length) {
+      S.intradayData = data;
+      rebuildChart();
+      updateChart();
+    } else {
+      // fall back to 1W if intraday not available
+      document.querySelectorAll('.tab').forEach(b => { b.classList.remove('active'); if (b.dataset.period === '1W') b.classList.add('active'); });
+      S.period = '1W';
+      S.intradayData = null;
+      rebuildChart();
+      updateChart();
+    }
+    hideLoading();
+  }
+
+  // ── Chart ────────────────────────────────────────────────────
+
+  function rebuildChart() {
+    if (S.chart) { S.chart.destroy(); S.chart = null; }
+    initChart();
+  }
 
   function initChart() {
     const ctx = document.getElementById('stockChart').getContext('2d');
+    const isCandle = S.chartType === 'candlestick';
 
-    Chart.defaults.color = '#6b7280';
-
-    state.chart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: [],
-        datasets: [
-          {
-            label: 'Kurs',
-            data: [],
-            borderColor: '#06b6d4',
-            backgroundColor: ctx => {
-              const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height);
-              g.addColorStop(0,   'rgba(6,182,212,.18)');
-              g.addColorStop(1,   'rgba(6,182,212,0)');
-              return g;
-            },
-            fill: true,
-            tension: 0.35,
-            borderWidth: 2,
-            pointRadius: 0,
-            pointHoverRadius: 5,
-            pointHoverBackgroundColor: '#06b6d4'
-          },
-          {
-            label: 'SMA 20',
-            data: [],
-            borderColor: '#f59e0b',
-            borderDash: [6, 4],
-            borderWidth: 1.5,
-            pointRadius: 0,
-            fill: false,
-            tension: 0.35
-          },
-          {
-            label: 'SMA 50',
-            data: [],
-            borderColor: '#8b5cf6',
-            borderDash: [6, 4],
-            borderWidth: 1.5,
-            pointRadius: 0,
-            fill: false,
-            tension: 0.35
-          },
-          {
-            label: 'Prognose',
-            data: [],
-            borderColor: '#38bdf8',
-            borderDash: [8, 5],
-            borderWidth: 2,
-            pointRadius: 4,
-            pointBackgroundColor: '#38bdf8',
-            pointBorderColor: '#060c1a',
-            pointBorderWidth: 1.5,
-            fill: false,
-            tension: 0.3,
-            spanGaps: false
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        animation: { duration: 600, easing: 'easeInOutQuart' },
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            backgroundColor: '#1a2540',
-            borderColor: '#243349',
-            borderWidth: 1,
-            titleColor: '#e5e7eb',
-            bodyColor: '#9ca3af',
-            padding: 12,
-            callbacks: {
-              label: ctx => {
-                if (ctx.raw === null) return null;
-                const prefix = ctx.dataset.label === 'Prognose' ? '◇ ' : '';
-                return `${prefix}${ctx.dataset.label}: $${Number(ctx.raw).toFixed(2)}`;
-              }
-            }
-          }
-        },
-        scales: {
-          x: {
-            grid: { color: '#1e2d45', drawBorder: false },
-            ticks: {
-              color: '#4b5563',
-              maxRotation: 0,
-              autoSkip: true,
-              maxTicksLimit: 8,
-              font: { size: 11 }
-            }
-          },
-          y: {
-            position: 'right',
-            grid: { color: '#1e2d45', drawBorder: false },
-            ticks: {
-              color: '#4b5563',
-              font: { size: 11 },
-              callback: v => `$${v.toFixed(0)}`
-            }
+    if (isCandle) {
+      S.chart = new Chart(ctx, {
+        type: 'candlestick',
+        data: { datasets: [{
+          label: t('leg_price'),
+          data: [],
+          color: { up: '#4ade80', down: '#f87171', unchanged: '#9b9188' }
+        }]},
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          animation: { duration: 400 },
+          plugins: { legend: { display: false }, tooltip: { ...tooltipStyle() } },
+          scales: {
+            x: { type: 'time', time: { unit: 'day', tooltipFormat: 'dd.MM.yyyy' }, grid: { color: '#403c33' }, ticks: { color: '#6b6560', font: { size: 11 }, maxTicksLimit: 8 } },
+            y: { position: 'right', grid: { color: '#403c33' }, ticks: { color: '#6b6560', font: { size: 11 }, callback: v => `$${v.toFixed(0)}` } }
           }
         }
-      }
-    });
+      });
+    } else {
+      const grad = ctx => {
+        const g = ctx.chart.ctx.createLinearGradient(0, 0, 0, ctx.chart.height);
+        g.addColorStop(0, 'rgba(212,136,74,.18)');
+        g.addColorStop(1, 'rgba(212,136,74,0)');
+        return g;
+      };
+      S.chart = new Chart(ctx, {
+        type: 'line',
+        data: { labels: [], datasets: [
+          { label: t('leg_price'),    data: [], borderColor: '#d4884a', backgroundColor: grad, fill: true, tension: 0.35, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4 },
+          { label: t('leg_sma20'),   data: [], borderColor: '#c8a060', borderDash: [6,4], borderWidth: 1.5, pointRadius: 0, fill: false, tension: 0.35 },
+          { label: t('leg_sma50'),   data: [], borderColor: '#8b7aaf', borderDash: [6,4], borderWidth: 1.5, pointRadius: 0, fill: false, tension: 0.35 },
+          { label: t('leg_forecast'), data: [], borderColor: '#d4884a', borderDash: [4,4], borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#d4884a', pointBorderColor: '#1c1917', pointBorderWidth: 1.5, fill: false, tension: 0.3, spanGaps: false },
+        ]},
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          animation: { duration: 500, easing: 'easeInOutQuart' },
+          plugins: { legend: { display: false }, tooltip: tooltipStyle() },
+          scales: {
+            x: { grid: { color: '#403c33' }, ticks: { color: '#6b6560', maxTicksLimit: 8, maxRotation: 0, font: { size: 11 } } },
+            y: { position: 'right', grid: { color: '#403c33' }, ticks: { color: '#6b6560', font: { size: 11 }, callback: v => `$${v.toFixed(0)}` } }
+          }
+        }
+      });
+    }
   }
 
-  // ── Chart befüllen ───────────────────────────────────────────
+  function tooltipStyle() {
+    return {
+      backgroundColor: '#302d27',
+      borderColor: '#504c43',
+      borderWidth: 1,
+      titleColor: '#f5f0eb',
+      bodyColor: '#9b9188',
+      padding: 10,
+      callbacks: {
+        label: ctx => {
+          if (ctx.raw === null || ctx.raw === undefined) return null;
+          if (typeof ctx.raw === 'object') {
+            const r = ctx.raw;
+            return [`O: $${r.o?.toFixed(2)}`, `H: $${r.h?.toFixed(2)}`, `L: $${r.l?.toFixed(2)}`, `C: $${r.c?.toFixed(2)}`];
+          }
+          return `${ctx.dataset.label}: $${Number(ctx.raw).toFixed(2)}`;
+        }
+      }
+    };
+  }
 
   function updateChart() {
-    if (!state.chart || !state.allPrices.length) return;
+    if (!S.chart) return;
+    const isCandle = S.chartType === 'candlestick';
+    const isIntraday = S.period === '1T' && S.intradayData;
 
-    // Zeitraum filtern
-    const periodDays = { '1M': 22, '3M': 66, '6M': 132, '1Y': 999 };
-    const limit = periodDays[state.period] || 22;
-    const sliceLen = Math.min(limit, state.allDates.length);
-    const dates  = state.allDates.slice(-sliceLen);
-    const prices = state.allPrices.slice(-sliceLen);
+    if (isIntraday) {
+      const d = S.intradayData;
+      if (isCandle) {
+        S.chart.data.datasets[0].data = d.timestamps.map((ts,i) => ({ x: ts, o: d.opens[i], h: d.highs[i], l: d.lows[i], c: d.prices[i] }));
+      } else {
+        S.chart.data.labels   = d.dates;
+        S.chart.data.datasets[0].data = d.prices;
+        S.chart.data.datasets[1].data = Forecast.sma(d.prices, Math.min(20, d.prices.length)).slice(-d.prices.length);
+        S.chart.data.datasets[2].data = new Array(d.prices.length).fill(null);
+        S.chart.data.datasets[3].data = new Array(d.prices.length).fill(null);
+      }
+      S.chart.update('active');
+      return;
+    }
 
-    // Indikatoren über alle Preise berechnen, dann auf Zeitraum kürzen
-    const sma20Full = Forecast.sma(state.allPrices, 20).slice(-sliceLen);
-    const sma50Full = Forecast.sma(state.allPrices, 50).slice(-sliceLen);
+    // Daily data sliced by period
+    const PERIOD_DAYS = { '1W': 5, '1M': 22, '3M': 66, '6M': 130, '1J': 999 };
+    const limit  = PERIOD_DAYS[S.period] || 22;
+    const n      = Math.min(limit, S.allDates.length);
+    const dates  = S.allDates.slice(-n);
+    const prices = S.allPrices.slice(-n);
+    const opens  = S.allOpens.slice(-n);
+    const highs  = S.allHighs.slice(-n);
+    const lows   = S.allLows.slice(-n);
 
-    // Prognose-Labels (nächste 7 Handelstage nach dem letzten Datum)
-    const forecastLabels = [];
+    if (isCandle) {
+      S.chart.data.datasets[0].data = dates.map((d,i) => ({
+        x: new Date(d).getTime(),
+        o: opens[i], h: highs[i], l: lows[i], c: prices[i]
+      }));
+      S.chart.update('active');
+      return;
+    }
+
+    // Line chart
+    const sma20Full = Forecast.sma(S.allPrices, 20).slice(-n);
+    const sma50Full = Forecast.sma(S.allPrices, 50).slice(-n);
+
+    const fcPrices = S.forecast?.forecastPrices || [];
+    const fcDays   = fcPrices.length;
+    const fcLabels = [];
     const lastDate = new Date(dates[dates.length - 1]);
-    for (let d = 0; forecastLabels.length < 7; ) {
+    for (let d = 0; fcLabels.length < fcDays; ) {
       d++;
       const nd = new Date(lastDate);
       nd.setDate(nd.getDate() + d);
       if (nd.getDay() === 0 || nd.getDay() === 6) continue;
-      forecastLabels.push(nd.toISOString().split('T')[0]);
+      fcLabels.push(nd.toISOString().split('T')[0]);
     }
 
-    // Forecast-Datenpunkte: erstes Element = letzter echter Kurs (Verbindungspunkt)
-    const fPrices = state.forecast?.forecastPrices ?? [];
-    const forecastData = [
-      ...new Array(sliceLen - 1).fill(null),
-      prices[prices.length - 1],
-      ...fPrices
-    ];
+    const fcData = [...new Array(n - 1).fill(null), prices[n - 1], ...fcPrices];
 
-    const allLabels = [...dates, ...forecastLabels];
-
-    // Chart-Daten setzen
-    state.chart.data.labels   = allLabels;
-    state.chart.data.datasets[0].data = [...prices, ...new Array(forecastLabels.length).fill(null)];
-    state.chart.data.datasets[1].data = [...sma20Full, ...new Array(forecastLabels.length).fill(null)];
-    state.chart.data.datasets[2].data = [...sma50Full, ...new Array(forecastLabels.length).fill(null)];
-    state.chart.data.datasets[3].data = forecastData;
-
-    state.chart.update('active');
+    S.chart.data.labels   = [...dates, ...fcLabels];
+    S.chart.data.datasets[0].data = [...prices, ...new Array(fcDays).fill(null)];
+    S.chart.data.datasets[1].data = [...sma20Full, ...new Array(fcDays).fill(null)];
+    S.chart.data.datasets[2].data = [...sma50Full, ...new Array(fcDays).fill(null)];
+    S.chart.data.datasets[3].data = fcData;
+    S.chart.update('active');
   }
 
-  // ── Header & Preisanzeige ────────────────────────────────────
+  // ── Header / Price ───────────────────────────────────────────
 
   function updateHeader(name, symbol, exchange, sector) {
-    document.getElementById('stockName').textContent    = name;
-    document.getElementById('stockSymbol').textContent  = symbol;
+    document.getElementById('stockName').textContent     = name;
+    document.getElementById('stockSymbol').textContent   = symbol;
     document.getElementById('stockExchange').textContent = exchange || '–';
-    document.getElementById('stockSector').textContent  = sector   || '–';
-    document.title = `${symbol} – Claude Forecast`;
+    document.getElementById('stockSector').textContent   = sector   || '–';
   }
 
-  function updatePrice(price, change, changePct) {
-    const priceEl  = document.getElementById('currentPrice');
-    const changeEl = document.getElementById('priceChange');
-    const timeEl   = document.getElementById('lastUpdated');
-
-    const prev = state.lastPrice;
-    state.lastPrice = price;
-
-    priceEl.textContent = `$${price.toFixed(2)}`;
-
+  function updatePrice(price, change, pct) {
+    const el = document.getElementById('currentPrice');
+    const prev = S.lastPrice; S.lastPrice = price;
+    el.textContent = `$${price.toFixed(2)}`;
     const up = change >= 0;
-    changeEl.textContent = `${up ? '▲' : '▼'} $${Math.abs(change).toFixed(2)}  ${up ? '+' : ''}${changePct.toFixed(2)}%`;
-    changeEl.className = 'price-change ' + (up ? 'positive' : 'negative');
-
+    const chgEl = document.getElementById('priceChange');
+    chgEl.textContent = `${up ? '▲' : '▼'} $${Math.abs(change).toFixed(2)}  ${up ? '+' : ''}${pct.toFixed(2)}%`;
+    chgEl.className   = 'price-change ' + (up ? 'positive' : 'negative');
     if (prev !== null && prev !== price) {
-      priceEl.classList.remove('price-flash-up', 'price-flash-down');
-      void priceEl.offsetWidth; // reflow to restart animation
-      priceEl.classList.add(price > prev ? 'price-flash-up' : 'price-flash-down');
+      el.classList.remove('flash-up','flash-down');
+      void el.offsetWidth;
+      el.classList.add(price > prev ? 'flash-up' : 'flash-down');
     }
-
-    timeEl.textContent = 'Aktualisiert: ' + new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    document.getElementById('lastUpdated').textContent = t('updatedAt') + ' ' + new Date().toLocaleTimeString('de-DE', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
   }
 
-  // ── Technische Indikatoren ───────────────────────────────────
+  function updateWatchlistBtn() {
+    const btn = document.getElementById('watchlistToggleBtn');
+    const inList = WL.has(S.symbol);
+    btn.textContent = inList ? t('watchlistInList') : t('watchlistAddCurrent');
+    btn.classList.toggle('in-list', inList);
+  }
+
+  // ── Indicators ───────────────────────────────────────────────
 
   function updateIndicators(prices) {
-    const rsiVal  = Forecast.rsi(prices);
-    const macdVal = Forecast.macd(prices);
-    const bb      = Forecast.bollingerBands(prices);
-    const vol     = Forecast.volatility(prices.slice(-30));
-    const sma20   = Forecast.sma(prices, 20);
-    const sma50   = Forecast.sma(prices, 50);
-    const last    = prices[prices.length - 1];
+    const rsiV = Forecast.rsi(prices);
+    const macdV = Forecast.macd(prices);
+    const bb    = Forecast.bollingerBands(prices);
+    const vol   = Forecast.volatility(prices.slice(-30));
+    const s20   = Forecast.sma(prices, 20); const last20 = s20[s20.length-1];
+    const s50   = Forecast.sma(prices, 50); const last50 = s50[s50.length-1];
+    const last  = prices[prices.length-1];
 
-    // RSI
-    if (rsiVal !== null) {
-      document.getElementById('rsiValue').textContent = rsiVal.toFixed(1);
-      const fill = document.getElementById('rsiFill');
-      // Position des Indikators als left-Offset in % (nicht die Breite)
-      fill.style.left = `calc(${rsiVal.toFixed(1)}% - 2px)`;
-      fill.style.width = '4px';
-      const rsiLbl = document.getElementById('rsiLabel');
-      if (rsiVal > 70) { rsiLbl.textContent = 'Überkauft – Vorsicht'; rsiLbl.className = 'ind-label negative'; }
-      else if (rsiVal < 30) { rsiLbl.textContent = 'Überverkauft – Kaufchance'; rsiLbl.className = 'ind-label positive'; }
-      else { rsiLbl.textContent = 'Neutral'; rsiLbl.className = 'ind-label neutral'; }
+    if (rsiV !== null) {
+      set('rsiValue', rsiV.toFixed(1));
+      document.getElementById('rsiCursor').style.left = `calc(${rsiV.toFixed(1)}% - 2px)`;
+      const lbl = rsiV > 70 ? [t('rsi_overbought'),'neg'] : rsiV < 30 ? [t('rsi_oversold'),'pos'] : [t('rsi_neutral'),'neu'];
+      setLbl('rsiLabel', lbl[0], lbl[1]);
     }
-
-    // MACD
-    if (macdVal) {
-      document.getElementById('macdValue').textContent = (macdVal.macd >= 0 ? '+' : '') + macdVal.macd.toFixed(2);
-      const macdLbl = document.getElementById('macdLabel');
-      macdLbl.textContent = macdVal.bullish ? 'Bullish – Signal überschritten' : 'Bearish – unter Signal-Linie';
-      macdLbl.className   = 'ind-label ' + (macdVal.bullish ? 'positive' : 'negative');
+    if (macdV) {
+      set('macdValue', (macdV.macd >= 0 ? '+' : '') + macdV.macd.toFixed(2));
+      setLbl('macdLabel', macdV.bullish ? t('macd_bull') : t('macd_bear'), macdV.bullish ? 'pos' : 'neg');
     }
-
-    // SMA 20
-    const s20 = sma20[sma20.length - 1];
-    if (s20) {
-      document.getElementById('sma20Value').textContent = `$${s20.toFixed(2)}`;
-      const above = last > s20;
-      document.getElementById('sma20Label').textContent = above ? 'Kurs über SMA ▲' : 'Kurs unter SMA ▼';
-      document.getElementById('sma20Label').className   = 'ind-label ' + (above ? 'positive' : 'negative');
-    }
-
-    // SMA 50
-    const s50 = sma50[sma50.length - 1];
-    if (s50) {
-      document.getElementById('sma50Value').textContent = `$${s50.toFixed(2)}`;
-      const above = last > s50;
-      document.getElementById('sma50Label').textContent = above ? 'Kurs über SMA ▲' : 'Kurs unter SMA ▼';
-      document.getElementById('sma50Label').className   = 'ind-label ' + (above ? 'positive' : 'negative');
-    }
-
-    // Bollinger Bands
+    if (last20) { set('sma20Value', `$${last20.toFixed(2)}`); setLbl('sma20Label', last > last20 ? t('above_sma') : t('below_sma'), last > last20 ? 'pos' : 'neg'); }
+    if (last50) { set('sma50Value', `$${last50.toFixed(2)}`); setLbl('sma50Label', last > last50 ? t('above_sma') : t('below_sma'), last > last50 ? 'pos' : 'neg'); }
     if (bb) {
-      let pos, cls;
-      if (bb.position > 0.85)      { pos = 'Oberes Band – überkauft'; cls = 'negative'; }
-      else if (bb.position < 0.15) { pos = 'Unteres Band – überverkauft'; cls = 'positive'; }
-      else                         { pos = 'Mittleres Band'; cls = 'neutral'; }
-      document.getElementById('bbValue').textContent  = pos;
-      document.getElementById('bbLabel').textContent  = `Breite: ${bb.bandwidth.toFixed(1)}%`;
-      document.getElementById('bbLabel').className    = 'ind-label ' + cls;
+      const pos = bb.position > .85 ? [t('bb_upper'),'neg'] : bb.position < .15 ? [t('bb_lower'),'pos'] : [t('bb_mid'),'neu'];
+      set('bbValue', pos[0]); setLbl('bbLabel', `Breite: ${bb.bandwidth.toFixed(1)}%`, pos[1]);
     }
-
-    // Volatilität
-    const volStr = vol.toFixed(1) + '%';
-    document.getElementById('volValue').textContent = volStr;
-    const volLbl = document.getElementById('volLabel');
-    if (vol < 15)      { volLbl.textContent = 'Niedrig'; volLbl.className = 'ind-label positive'; }
-    else if (vol < 30) { volLbl.textContent = 'Moderat'; volLbl.className = 'ind-label neutral'; }
-    else               { volLbl.textContent = 'Hoch';    volLbl.className = 'ind-label negative'; }
+    set('volValue', vol.toFixed(1) + '%');
+    const vl = vol < 15 ? [t('vol_low'),'pos'] : vol < 30 ? [t('vol_mod'),'neu'] : [t('vol_high'),'neg'];
+    setLbl('volLabel', vl[0], vl[1]);
   }
 
-  // ── Prognose-Karte ───────────────────────────────────────────
+  // ── Forecast card ────────────────────────────────────────────
 
-  function updateForecastCard(fc, livePrice) {
+  function updateForecastCard(fc) {
     if (!fc) return;
-
-    // Empfehlung
     const recEl = document.getElementById('recValue');
-    recEl.textContent = fc.recommendation;
-    recEl.className   = 'rec-value ' + (fc.recommendation === 'KAUFEN' ? 'buy' : fc.recommendation === 'VERKAUFEN' ? 'sell' : 'hold');
-
-    // Kursziel
-    document.getElementById('targetPrice').textContent = `$${fc.targetPrice.toFixed(2)}`;
-    const deltaEl = document.getElementById('targetDelta');
+    recEl.textContent = fc.recommendation === 'KAUFEN' ? t('rec_buy') : fc.recommendation === 'VERKAUFEN' ? t('rec_sell') : t('rec_hold');
+    recEl.className   = 'fc-rec ' + (fc.recommendation === 'KAUFEN' ? 'buy' : fc.recommendation === 'VERKAUFEN' ? 'sell' : 'hold');
+    set('targetPrice', `$${fc.targetPrice.toFixed(2)}`);
     const up = fc.totalReturn >= 0;
-    deltaEl.textContent  = `${up ? '▲' : '▼'} ${up ? '+' : ''}${fc.totalReturn.toFixed(2)}%`;
-    deltaEl.className    = 'target-delta ' + (up ? 'positive' : 'negative');
-
-    // Konfidenz
-    document.getElementById('confPct').textContent    = `${fc.confidence}%`;
-    document.getElementById('confFill').style.width   = `${fc.confidence}%`;
-
-    // Faktoren
-    setFactor('facReg',   fc.factors.regression);
-    setFactor('facTrend', fc.factors.trend);
-    setFactor('facMom',   fc.factors.momentum);
-    setFactor('facSent',  fc.factors.sentiment);
+    const dEl = document.getElementById('targetDelta');
+    dEl.textContent = `${up ? '▲' : '▼'} ${up ? '+' : ''}${fc.totalReturn.toFixed(2)}%`;
+    dEl.className   = 'fc-delta ' + (up ? 'positive' : 'negative');
+    set('confPct', `${fc.confidence}%`);
+    document.getElementById('confFill').style.width = `${fc.confidence}%`;
+    setFac('Reg',   fc.factors.regression);
+    setFac('Trend', fc.factors.trend);
+    setFac('Mom',   fc.factors.momentum);
+    setFac('Sent',  fc.factors.sentiment);
   }
 
-  function setFactor(id, pct) {
-    const bar   = document.getElementById(id + 'Bar');
-    const score = document.getElementById(id + 'Score');
-    if (bar)   bar.style.width  = `${pct}%`;
-    if (score) score.textContent = `${pct}%`;
-    const color = pct >= 60 ? '#10b981' : pct >= 40 ? '#f59e0b' : '#ef4444';
-    if (bar) bar.style.background = color;
+  function setFac(id, pct) {
+    const fill = document.getElementById('fac' + id + 'Fill');
+    const pctEl = document.getElementById('fac' + id + 'Pct');
+    if (fill)  { fill.style.width = `${pct}%`; fill.style.background = pct >= 60 ? '#4ade80' : pct >= 40 ? '#fbbf24' : '#f87171'; }
+    if (pctEl) pctEl.textContent = `${pct}%`;
   }
 
-  // ── Nachrichten ──────────────────────────────────────────────
+  // ── News ─────────────────────────────────────────────────────
 
   function updateNews(articles, overall) {
-    const list    = document.getElementById('newsList');
-    const badgeEl = document.getElementById('sentimentBadge');
+    const badge = document.getElementById('sentimentBadge');
+    const emoji = overall > .6 ? '😊' : overall < .4 ? '😟' : '😐';
+    const lbl   = overall > .6 ? t('sent_positive') : overall < .4 ? t('sent_negative') : t('sent_neutral');
+    const col   = overall > .6 ? '#4ade80' : overall < .4 ? '#f87171' : '#fbbf24';
+    badge.textContent = `${emoji} ${lbl}`;
+    badge.style.color = col;
+    badge.style.borderColor = col + '44';
 
-    // Gesamtsentiment-Badge
-    let emoji, label, color;
-    if (overall > 0.6)      { emoji = '😊'; label = 'Positiv';  color = '#10b981'; }
-    else if (overall < 0.4) { emoji = '😟'; label = 'Negativ';  color = '#ef4444'; }
-    else                    { emoji = '😐'; label = 'Neutral';  color = '#f59e0b'; }
-    badgeEl.textContent = `${emoji} ${label}`;
-    badgeEl.style.color = color;
-    badgeEl.style.borderColor = color + '44';
-
-    list.innerHTML = articles.map(a => {
-      const sentClass = a.sentiment > 0.6 ? 'positive' : a.sentiment < 0.4 ? 'negative' : 'neutral';
-      const target    = a.url !== '#' ? ' target="_blank" rel="noopener"' : '';
-      return `
-        <a class="news-item" href="${escapeAttr(a.url)}"${target}>
-          <div class="news-top">
-            <span class="news-dot ${sentClass}"></span>
-            <span class="news-title">${escapeHtml(a.title)}</span>
-          </div>
-          <div class="news-meta">
-            <span>${escapeHtml(a.source)}</span>
-            <span>·</span>
-            <span>${escapeHtml(a.timeAgo)}</span>
-          </div>
-        </a>`;
+    document.getElementById('newsList').innerHTML = articles.map(a => {
+      const sc = a.sentiment > .6 ? 'positive' : a.sentiment < .4 ? 'negative' : 'neutral';
+      const hr = a.url !== '#' ? ` target="_blank" rel="noopener"` : '';
+      return `<a class="news-item" href="${esc(a.url)}"${hr}>
+        <div class="news-top"><span class="news-dot ${sc}"></span><span class="news-title">${escH(a.title)}</span></div>
+        <div class="news-meta"><span>${escH(a.source)}</span><span>·</span><span>${escH(a.timeAgo)}</span></div>
+      </a>`;
     }).join('');
   }
 
-  // ── Suche ────────────────────────────────────────────────────
+  // ── Watchlist render ─────────────────────────────────────────
 
-  function handleSearch() {
-    const val = document.getElementById('stockSearch').value.trim().toUpperCase();
-    if (!val) return;
-    hideSuggestions();
-    loadStock(val, val);
-  }
-
-  async function handleSuggest() {
-    const val = document.getElementById('stockSearch').value.trim();
-    if (val.length < 1) { hideSuggestions(); return; }
-
-    const results = API.KEYS.hasAny()
-      ? await API.searchSymbol(val)
-      : API.demoSuggestions(val);
-
-    if (!results.length) { hideSuggestions(); return; }
-
-    const box = document.getElementById('suggestions');
-    box.innerHTML = results.map(r => `
-      <div class="sug-item" data-symbol="${escapeAttr(r.symbol)}" data-name="${escapeAttr(r.name)}">
-        <span class="sug-symbol">${escapeHtml(r.symbol)}</span>
-        <span class="sug-name">${escapeHtml(r.name)}</span>
+  function renderWatchlist() {
+    const list = WL.get();
+    const el   = document.getElementById('watchlistItems');
+    if (!list.length) {
+      el.innerHTML = `<p class="wl-empty">${t('watchlistEmpty')}</p>`;
+      return;
+    }
+    el.innerHTML = list.map(s => `
+      <div class="wl-item" data-sym="${esc(s.symbol)}" data-name="${esc(s.name)}">
+        <span class="wl-sym">${escH(s.symbol)}</span>
+        <span class="wl-name">${escH(s.name)}</span>
+        <span class="wl-price" id="wlp_${s.symbol}">–</span>
+        <span class="wl-chg"  id="wlc_${s.symbol}">–</span>
+        <button class="wl-rm" data-sym="${esc(s.symbol)}" title="${t('watchlistRemove')}">×</button>
       </div>`).join('');
 
-    box.querySelectorAll('.sug-item').forEach(el => {
-      el.addEventListener('click', () => {
-        document.getElementById('stockSearch').value = el.dataset.symbol;
-        hideSuggestions();
-        loadStock(el.dataset.symbol, el.dataset.name);
+    el.querySelectorAll('.wl-item').forEach(row => {
+      row.addEventListener('click', e => {
+        if (e.target.classList.contains('wl-rm')) return;
+        loadStock(row.dataset.sym, row.dataset.name);
+      });
+    });
+    el.querySelectorAll('.wl-rm').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        WL.remove(btn.dataset.sym);
+        updateWatchlistBtn();
+        renderWatchlist();
       });
     });
 
+    // Fetch prices asynchronously
+    list.forEach(async s => {
+      const q = await API.fetchQuote(s.symbol).catch(() => null);
+      if (q) {
+        const pe = document.getElementById('wlp_' + s.symbol);
+        const ce = document.getElementById('wlc_' + s.symbol);
+        if (pe) pe.textContent = `$${q.price.toFixed(2)}`;
+        if (ce) {
+          const up = q.changePercent >= 0;
+          ce.textContent = `${up ? '+' : ''}${q.changePercent.toFixed(2)}%`;
+          ce.className   = 'wl-chg ' + (up ? 'pos' : 'neg');
+        }
+      }
+    });
+  }
+
+  // ── Market bar ───────────────────────────────────────────────
+
+  async function loadMarketBar() {
+    const items = await API.fetchMarket();
+    const el    = document.getElementById('marketItems');
+    el.innerHTML = items.map(m => {
+      const up  = (m.changePercent || 0) >= 0;
+      const prc = m.price ? `$${m.price.toFixed(2)}` : '–';
+      const chg = m.changePercent != null ? `${up ? '+' : ''}${m.changePercent.toFixed(2)}%` : '';
+      return `<div class="market-item" data-sym="${esc(m.symbol)}" title="${m.label}">
+        <span class="mi-name">${m.label}</span>
+        <span class="mi-val">${prc}</span>
+        ${chg ? `<span class="mi-chg ${up ? 'pos' : 'neg'}">${chg}</span>` : ''}
+      </div>`;
+    }).join('');
+
+    el.querySelectorAll('.market-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const sym = item.dataset.sym;
+        const found = API.MARKET_SYMS.find(m => m.symbol === sym);
+        if (found) loadStock(sym, found.label);
+      });
+    });
+  }
+
+  // ── Search ───────────────────────────────────────────────────
+
+  function doSearch() {
+    const val = document.getElementById('stockSearch').value.trim().toUpperCase();
+    if (!val) return;
+    hideSug();
+    loadStock(val, val);
+  }
+
+  async function doSuggest() {
+    const val = document.getElementById('stockSearch').value.trim();
+    if (!val) { hideSug(); return; }
+    const results = API.KEYS.hasAny() ? await API.searchSymbol(val) : API.demoSuggestions(val);
+    if (!results.length) { hideSug(); return; }
+    const box = document.getElementById('suggestions');
+    box.innerHTML = results.map(r => `<div class="sug-item" data-sym="${esc(r.symbol)}" data-name="${esc(r.name)}"><span class="sug-sym">${escH(r.symbol)}</span><span class="sug-name">${escH(r.name)}</span></div>`).join('');
+    box.querySelectorAll('.sug-item').forEach(el => {
+      el.addEventListener('click', () => {
+        document.getElementById('stockSearch').value = el.dataset.sym;
+        hideSug();
+        loadStock(el.dataset.sym, el.dataset.name);
+      });
+    });
     box.hidden = false;
   }
 
-  function hideSuggestions() {
-    document.getElementById('suggestions').hidden = true;
-  }
+  function hideSug() { document.getElementById('suggestions').hidden = true; }
 
-  // ── Auto-Refresh ─────────────────────────────────────────────
+  // ── Auto-refresh ─────────────────────────────────────────────
 
   function startAutoRefresh() {
-    clearInterval(state.refreshTimer);
-    state.refreshTimer = setInterval(async () => {
-      const quote = await API.fetchQuote(state.symbol);
-      if (quote) {
-        updatePrice(quote.price, quote.change, quote.changePercent);
-        // Letzten Preis im Array aktualisieren und Chart refreshen
-        if (state.allPrices.length) {
-          state.allPrices[state.allPrices.length - 1] = quote.price;
-          updateChart();
-        }
+    clearInterval(S.refreshTimer);
+    S.refreshTimer = setInterval(async () => {
+      const q = await API.fetchQuote(S.symbol);
+      if (q) {
+        updatePrice(q.price, q.change, q.changePercent);
+        if (S.allPrices.length) { S.allPrices[S.allPrices.length-1] = q.price; updateChart(); }
       }
-    }, 60000); // jede Minute
+      renderWatchlist();
+    }, 60000);
   }
 
-  // ── Einstellungen / Modal ─────────────────────────────────────
+  // ── Settings ─────────────────────────────────────────────────
 
-  function openModal() {
-    document.getElementById('settingsModal').hidden = false;
-    document.body.style.overflow = 'hidden';
-  }
-  function closeModal() {
-    document.getElementById('settingsModal').hidden = true;
-    document.body.style.overflow = '';
-  }
+  function openModal()  { document.getElementById('settingsModal').hidden = false; document.body.style.overflow='hidden'; }
+  function closeModal() { document.getElementById('settingsModal').hidden = true;  document.body.style.overflow=''; }
   function loadModalKeys() {
     document.getElementById('proxyUrl').value = API.KEYS.proxy();
     document.getElementById('avKey').value    = API.KEYS.av();
@@ -527,57 +574,29 @@ const App = (() => {
     document.getElementById('gnKey').value    = API.KEYS.gn();
   }
   function saveKeys() {
-    API.KEYS.save(
-      document.getElementById('proxyUrl').value,
-      document.getElementById('avKey').value,
-      document.getElementById('fhKey').value,
-      document.getElementById('gnKey').value
-    );
-    closeModal();
-    updateDemoBanner();
-    loadStock(state.symbol, state.name, state.exchange, state.sector);
+    API.KEYS.save(document.getElementById('proxyUrl').value, document.getElementById('avKey').value, document.getElementById('fhKey').value, document.getElementById('gnKey').value);
+    closeModal(); updateDemoBanner();
+    loadStock(S.symbol, S.name, S.exchange, S.sector);
   }
-  function clearKeys() {
-    API.KEYS.clear();
-    loadModalKeys();
-    updateDemoBanner();
-  }
-
+  function clearKeys() { API.KEYS.clear(); loadModalKeys(); updateDemoBanner(); }
   function updateDemoBanner() {
-    const banner = document.getElementById('demoBanner');
-    if (API.KEYS.hasAny()) {
-      banner.classList.add('hidden');
-    } else {
-      banner.classList.remove('hidden');
-    }
+    document.getElementById('demoBanner').classList.toggle('hidden', API.KEYS.hasAny());
   }
 
-  // ── Loading-Overlay ───────────────────────────────────────────
+  // ── Loading ───────────────────────────────────────────────────
 
-  function showLoading(text = 'Laden…') {
-    document.getElementById('loadingText').textContent = text;
-    document.getElementById('loadingOverlay').hidden = false;
-  }
-  function hideLoading() {
-    document.getElementById('loadingOverlay').hidden = true;
-  }
+  function showLoading(text) { document.getElementById('loadingText').textContent = text; document.getElementById('loadingOverlay').hidden = false; }
+  function hideLoading()     { document.getElementById('loadingOverlay').hidden = true; }
 
-  // ── Hilfsfunktionen ──────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────
 
-  function debounce(fn, ms) {
-    let t;
-    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
-  }
-
-  function escapeHtml(s) {
-    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-  function escapeAttr(s) {
-    return String(s ?? '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  }
+  function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+  function set(id, val)     { const el = document.getElementById(id); if (el) el.textContent = val; }
+  function setLbl(id, text, cls) { const el = document.getElementById(id); if (!el) return; el.textContent = text; el.className = 'ind-sub ' + (cls||''); }
+  function esc(s)  { return String(s||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+  function escH(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
   return { init };
 })();
 
-// Starten, sobald das DOM bereit ist
 document.addEventListener('DOMContentLoaded', App.init);
