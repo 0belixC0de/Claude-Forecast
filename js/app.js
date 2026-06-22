@@ -30,13 +30,14 @@ const App = (() => {
   // ── Watchlist ────────────────────────────────────────────────
 
   const WL = {
-    get: () => { try { return JSON.parse(localStorage.getItem('cf_wl') || '[]'); } catch { return []; } },
+    _key: () => `cf_wl_${Auth.username() || '_guest'}`,
+    get: () => { try { return JSON.parse(localStorage.getItem(WL._key()) || '[]'); } catch { return []; } },
     has: sym => WL.get().some(s => s.symbol === sym),
     add(sym, name) {
       const list = WL.get();
-      if (!list.find(s => s.symbol === sym)) { list.push({ symbol: sym, name }); localStorage.setItem('cf_wl', JSON.stringify(list)); }
+      if (!list.find(s => s.symbol === sym)) { list.push({ symbol: sym, name }); localStorage.setItem(WL._key(), JSON.stringify(list)); }
     },
-    remove(sym) { localStorage.setItem('cf_wl', JSON.stringify(WL.get().filter(s => s.symbol !== sym))); }
+    remove(sym) { localStorage.setItem(WL._key(), JSON.stringify(WL.get().filter(s => s.symbol !== sym))); }
   };
 
   // ── Auth / Login ──────────────────────────────────────────────
@@ -189,7 +190,7 @@ const App = (() => {
       document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       S.period = btn.dataset.period;
-      if (S.period === '1T') loadIntraday(); else updateChart();
+      if (S.period === '1T') { loadIntraday(); } else { hideChartMsg(); updateChart(); }
     });
 
     // Forecast period
@@ -293,21 +294,27 @@ const App = (() => {
   async function loadIntraday() {
     showLoading(t('loading'));
     const now  = Math.floor(Date.now() / 1000);
-    const from = now - 2 * 86400; // last 2 days for safety
+    const from = now - 2 * 86400;
     const data = await API.fetchCandle(S.symbol, '5', from, now);
+    hideLoading();
     if (data && data.prices.length) {
       S.intradayData = data;
+      hideChartMsg();
       rebuildChart();
       updateChart();
     } else {
-      // fall back to 1W if intraday not available
-      document.querySelectorAll('.tab').forEach(b => { b.classList.remove('active'); if (b.dataset.period === '1W') b.classList.add('active'); });
-      S.period = '1W';
       S.intradayData = null;
-      rebuildChart();
-      updateChart();
+      showChartMsg('⚠️ ' + t('intraday_na') + '\n\nBitte den Cloudflare Worker um die Route /candle ergänzen.');
     }
-    hideLoading();
+  }
+
+  function showChartMsg(text) {
+    const el = document.getElementById('chartMsg');
+    if (el) { el.textContent = text; el.hidden = false; }
+  }
+  function hideChartMsg() {
+    const el = document.getElementById('chartMsg');
+    if (el) el.hidden = true;
   }
 
   // ── Chart ────────────────────────────────────────────────────

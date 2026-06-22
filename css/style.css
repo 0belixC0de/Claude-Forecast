@@ -325,6 +325,21 @@ main {
 
 .chart-wrap { position: relative; height: 280px; margin-bottom: 10px; }
 .chart-wrap canvas { display: block; }
+.chart-msg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(28,25,23,.88);
+  color: var(--muted);
+  font-size: .88rem;
+  text-align: center;
+  white-space: pre-line;
+  padding: 1.5rem;
+  border-radius: 8px;
+  line-height: 1.6;
+}
 
 .chart-legend { display: flex; gap: 14px; flex-wrap: wrap; }
 .leg-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
