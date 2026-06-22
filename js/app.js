@@ -403,14 +403,24 @@ const App = (() => {
 
     if (isIntraday) {
       const d = S.intradayData;
+      // Filter to the most recent trading day only
+      const latestDate = d.dates[d.dates.length - 1];
+      const idx = d.dates.reduce((acc, dt, i) => (dt === latestDate ? [...acc, i] : acc), []);
+
       if (isCandle) {
-        S.chart.data.datasets[0].data = d.timestamps.map((ts,i) => ({ x: ts, o: d.opens[i], h: d.highs[i], l: d.lows[i], c: d.prices[i] }));
+        S.chart.data.datasets[0].data = idx.map(i => ({
+          x: d.timestamps[i], o: d.opens[i], h: d.highs[i], l: d.lows[i], c: d.prices[i]
+        }));
       } else {
-        S.chart.data.labels   = d.dates;
-        S.chart.data.datasets[0].data = d.prices;
-        S.chart.data.datasets[1].data = Forecast.sma(d.prices, Math.min(20, d.prices.length)).slice(-d.prices.length);
-        S.chart.data.datasets[2].data = new Array(d.prices.length).fill(null);
-        S.chart.data.datasets[3].data = new Array(d.prices.length).fill(null);
+        const prices = idx.map(i => d.prices[i]);
+        const times  = idx.map(i =>
+          new Date(d.timestamps[i]).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+        );
+        S.chart.data.labels             = times;
+        S.chart.data.datasets[0].data   = prices;
+        S.chart.data.datasets[1].data   = Forecast.sma(prices, Math.min(20, prices.length));
+        S.chart.data.datasets[2].data   = new Array(prices.length).fill(null);
+        S.chart.data.datasets[3].data   = new Array(prices.length).fill(null);
       }
       S.chart.update('active');
       return;
