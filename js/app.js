@@ -6,13 +6,22 @@ const App = (() => {
 
   // ── State ────────────────────────────────────────────────────
 
+  function isOwnerMode() {
+    if (new URLSearchParams(location.search).has('admin')) {
+      localStorage.setItem('cf_owner', '1');
+      return true;
+    }
+    return localStorage.getItem('cf_owner') === '1';
+  }
+
   const S = {
     symbol: 'AAPL', name: 'Apple Inc.', exchange: 'NASDAQ', sector: 'Technology',
     allDates: [], allPrices: [], allOpens: [], allHighs: [], allLows: [],
     intradayData: null,
     period: '1M', chartType: 'line', forecastDays: 7,
     lang: localStorage.getItem('cf_lang') || 'de',
-    forecast: null, chart: null, refreshTimer: null, lastPrice: null
+    forecast: null, chart: null, refreshTimer: null, lastPrice: null,
+    isOwner: isOwnerMode()
   };
 
   // ── i18n ─────────────────────────────────────────────────────
@@ -42,6 +51,7 @@ const App = (() => {
 
   async function init() {
     applyLang();
+    applyOwnerMode();
     bindUI();
     loadModalKeys();
     updateDemoBanner();
@@ -54,7 +64,31 @@ const App = (() => {
 
   // ── Events ───────────────────────────────────────────────────
 
+  function applyOwnerMode() {
+    document.getElementById('settingsBtn').hidden = !S.isOwner;
+  }
+
   function bindUI() {
+    // Logo triple-click → toggle owner mode
+    let logoTaps = 0, logoTimer;
+    document.querySelector('.logo').style.cursor = 'default';
+    document.querySelector('.logo').addEventListener('click', () => {
+      logoTaps++;
+      clearTimeout(logoTimer);
+      logoTimer = setTimeout(() => { logoTaps = 0; }, 600);
+      if (logoTaps >= 3) {
+        logoTaps = 0;
+        S.isOwner = !S.isOwner;
+        if (S.isOwner) { localStorage.setItem('cf_owner', '1'); } else { localStorage.removeItem('cf_owner'); }
+        applyOwnerMode();
+        updateDemoBanner();
+        const logo = document.querySelector('.logo-icon');
+        logo.style.transition = 'opacity .15s';
+        logo.style.opacity = '0.3';
+        setTimeout(() => { logo.style.opacity = ''; }, 300);
+      }
+    });
+
     // Search
     document.getElementById('searchBtn').addEventListener('click', doSearch);
     document.getElementById('stockSearch').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
@@ -580,7 +614,8 @@ const App = (() => {
   }
   function clearKeys() { API.KEYS.clear(); loadModalKeys(); updateDemoBanner(); }
   function updateDemoBanner() {
-    document.getElementById('demoBanner').classList.toggle('hidden', API.KEYS.hasAny());
+    const hide = !S.isOwner || API.KEYS.hasCustom();
+    document.getElementById('demoBanner').classList.toggle('hidden', hide);
   }
 
   // ── Loading ───────────────────────────────────────────────────

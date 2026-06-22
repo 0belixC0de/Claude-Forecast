@@ -6,8 +6,10 @@ const API = (() => {
 
   // ── Keys ────────────────────────────────────────────────────
 
+  const DEFAULT_PROXY = 'https://shiny-paper-eb08.tnclindner.workers.dev';
+
   const KEYS = {
-    proxy: () => localStorage.getItem('cf_proxy') || '',
+    proxy: () => localStorage.getItem('cf_proxy') || DEFAULT_PROXY,
     av:    () => localStorage.getItem('cf_av')    || '',
     fh:    () => localStorage.getItem('cf_fh')    || '',
     gn:    () => localStorage.getItem('cf_gn')    || '',
@@ -18,7 +20,8 @@ const API = (() => {
       localStorage.setItem('cf_gn',    gn.trim());
     },
     clear() { ['cf_proxy','cf_av','cf_fh','cf_gn'].forEach(k => localStorage.removeItem(k)); },
-    hasAny: () => !!(localStorage.getItem('cf_proxy') || localStorage.getItem('cf_av') || localStorage.getItem('cf_fh'))
+    hasAny:    () => true,
+    hasCustom: () => !!(localStorage.getItem('cf_proxy') || localStorage.getItem('cf_av') || localStorage.getItem('cf_fh'))
   };
 
   // ── Cache ────────────────────────────────────────────────────
